@@ -1,0 +1,1 @@
+"""AI Travel Planner Backend Application"""
