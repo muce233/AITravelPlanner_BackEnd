@@ -6,7 +6,7 @@ authors = [
     {name = "AI Travel Planner Team"}
 ]
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = "==3.13.*"
 dependencies = [
     "fastapi>=0.104.1",
     "uvicorn[standard]>=0.24.0",
@@ -39,12 +39,27 @@ dev = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[tool.uv.sources]
-
 [tool.uv]
+# uv-specific configuration
+# Enable faster dependency resolution
+resolution = "highest"
+
+# Configure dependency caching
+cache-dir = ".uv-cache"
 
 [tool.uv.pip]
+# Configure pip index sources
 index-url = "https://pypi.org/simple/"
+
+# Optional: Configure trusted hosts if needed
+# trusted-hosts = ["pypi.org"]
+
+[tool.uv.sources]
+# Configure package sources if needed
+# Example:
+# ai-travel-planner-backend = { path = "." }
+
+
 
 
 

@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     
     # CORS配置
     allowed_hosts: List[str] = ["localhost", "127.0.0.1"]
-    cors_origins: List[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    cors_origins: List[str] = ["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:5173"]
     
     class Config:
         env_file = ".env"

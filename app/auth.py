@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from .config import settings
 from .database import get_db
-from .models import User
+from .models import User as UserModel
 from .schemas import TokenData
 
 # 密码加密上下文
@@ -25,6 +25,9 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 def get_password_hash(password: str) -> str:
     """生成密码哈希"""
+    # bcrypt有72字节限制，超过则截断
+    if len(password.encode('utf-8')) > 72:
+        password = password.encode('utf-8')[:72].decode('utf-8', errors='ignore')
     return pwd_context.hash(password)
 
 
@@ -41,17 +44,17 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     return encoded_jwt
 
 
-def get_user_by_username(db: Session, username: str) -> Optional[User]:
+def get_user_by_username(db: Session, username: str) -> Optional[UserModel]:
     """根据用户名获取用户"""
-    return db.query(User).filter(User.username == username).first()
+    return db.query(UserModel).filter(UserModel.username == username).first()
 
 
-def get_user_by_phone(db: Session, phone_number: str) -> Optional[User]:
+def get_user_by_phone(db: Session, phone_number: str) -> Optional[UserModel]:
     """根据手机号获取用户"""
-    return db.query(User).filter(User.phone_number == phone_number).first()
+    return db.query(UserModel).filter(UserModel.phone_number == phone_number).first()
 
 
-def authenticate_user(db: Session, username: str, password: str) -> Optional[User]:
+def authenticate_user(db: Session, username: str, password: str) -> Optional[UserModel]:
     """用户认证"""
     # 先尝试用户名登录
     user = get_user_by_username(db, username)
@@ -69,7 +72,7 @@ def authenticate_user(db: Session, username: str, password: str) -> Optional[Use
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: Session = Depends(get_db)
-) -> User:
+) -> UserModel:
     """获取当前认证用户"""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -94,7 +97,7 @@ async def get_current_user(
     return user
 
 
-async def get_current_active_user(current_user: User = Depends(get_current_user)) -> User:
+async def get_current_active_user(current_user: UserModel = Depends(get_current_user)) -> UserModel:
     """获取当前活跃用户"""
     # 这里可以添加用户状态检查逻辑
     return current_user
