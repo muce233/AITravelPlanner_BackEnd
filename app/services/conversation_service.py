@@ -97,6 +97,39 @@ class ConversationService:
             page_size=page_size
         )
     
+    async def get_or_create_conversation(
+        self, 
+        user_id: int, 
+        title: str = "新对话"
+    ) -> ConversationModel:
+        """获取或创建对话"""
+        # 首先尝试获取用户最近的活动对话
+        stmt = select(ConversationModel).where(
+            ConversationModel.user_id == user_id,
+            ConversationModel.is_active == True
+        ).order_by(desc(ConversationModel.updated_at)).limit(1)
+        
+        result = await self.db.execute(stmt)
+        conversation = result.scalar_one_or_none()
+        
+        # 如果没有活动对话，创建新对话
+        if not conversation:
+            conversation_id = str(uuid.uuid4())
+            conversation = ConversationModel(
+                id=conversation_id,
+                title=title,
+                user_id=user_id,
+                model="chat-model",
+                messages=[],
+                is_active=True
+            )
+            
+            self.db.add(conversation)
+            await self.db.commit()
+            await self.db.refresh(conversation)
+        
+        return conversation
+    
     async def update_conversation(
         self, 
         conversation_id: str, 
@@ -132,6 +165,46 @@ class ConversationService:
         await self.db.commit()
         await self.db.refresh(conversation)
         return True
+    
+    async def add_message(
+        self, 
+        conversation_id: str, 
+        user_id: int,
+        role: str, 
+        content: str, 
+        name: Optional[str] = None,
+        tokens: Optional[int] = None
+    ) -> Optional[ConversationModel]:
+        """向对话添加消息（简化版本）"""
+        conversation = await self.get_conversation(conversation_id, user_id)
+        if not conversation:
+            return None
+        
+        # 将消息添加到消息列表
+        messages = conversation.messages or []
+        messages.append({
+            "role": role,
+            "content": content,
+            "name": name,
+            "tokens": tokens,
+            "timestamp": datetime.now().isoformat()
+        })
+        
+        # 限制消息历史长度（保留最近50条消息）
+        if len(messages) > 50:
+            messages = messages[-50:]
+        
+        conversation.messages = messages
+        conversation.updated_at = datetime.now()
+        
+        # 如果是第一条用户消息，更新对话标题
+        if len(messages) == 1 and role == "user":
+            conversation.title = content[:50] + "..." if len(content) > 50 else content
+        
+        await self.db.commit()
+        await self.db.refresh(conversation)
+        
+        return conversation
     
     async def add_message_to_conversation(
         self, 
