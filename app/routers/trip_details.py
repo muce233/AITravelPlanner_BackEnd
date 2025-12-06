@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from typing import List
 
 from ..database import get_db
@@ -11,18 +12,20 @@ router = APIRouter(prefix="/api/trips/{trip_id}/details", tags=["trip_details"])
 
 
 @router.post("/", response_model=TripDetail)
-def create_trip_detail(
+async def create_trip_detail(
     trip_id: int,
     detail: TripDetailCreate,
     current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """添加行程详情"""
     # 检查行程是否存在且属于当前用户
-    trip = db.query(Trip).filter(
+    stmt = select(Trip).where(
         Trip.id == trip_id,
         Trip.user_id == current_user.id
-    ).first()
+    )
+    result = await db.execute(stmt)
+    trip = result.scalar_one_or_none()
     
     if not trip:
         raise HTTPException(
@@ -46,23 +49,25 @@ def create_trip_detail(
     )
     
     db.add(db_detail)
-    db.commit()
-    db.refresh(db_detail)
+    await db.commit()
+    await db.refresh(db_detail)
     return db_detail
 
 
 @router.get("/", response_model=List[TripDetail])
-def get_trip_details(
+async def get_trip_details(
     trip_id: int,
     current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """获取行程详情列表"""
     # 检查行程是否存在且属于当前用户
-    trip = db.query(Trip).filter(
+    stmt = select(Trip).where(
         Trip.id == trip_id,
         Trip.user_id == current_user.id
-    ).first()
+    )
+    result = await db.execute(stmt)
+    trip = result.scalar_one_or_none()
     
     if not trip:
         raise HTTPException(
@@ -70,24 +75,28 @@ def get_trip_details(
             detail="行程不存在"
         )
     
-    details = db.query(TripDetail).filter(TripDetail.trip_id == trip_id).all()
+    stmt = select(TripDetail).where(TripDetail.trip_id == trip_id)
+    result = await db.execute(stmt)
+    details = result.scalars().all()
     return details
 
 
 @router.put("/{detail_id}", response_model=TripDetail)
-def update_trip_detail(
+async def update_trip_detail(
     trip_id: int,
     detail_id: int,
     detail_update: TripDetailUpdate,
     current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """更新行程详情"""
     # 检查行程是否存在且属于当前用户
-    trip = db.query(Trip).filter(
+    stmt = select(Trip).where(
         Trip.id == trip_id,
         Trip.user_id == current_user.id
-    ).first()
+    )
+    result = await db.execute(stmt)
+    trip = result.scalar_one_or_none()
     
     if not trip:
         raise HTTPException(
@@ -96,10 +105,12 @@ def update_trip_detail(
         )
     
     # 检查详情是否存在
-    detail = db.query(TripDetail).filter(
+    stmt = select(TripDetail).where(
         TripDetail.id == detail_id,
         TripDetail.trip_id == trip_id
-    ).first()
+    )
+    result = await db.execute(stmt)
+    detail = result.scalar_one_or_none()
     
     if not detail:
         raise HTTPException(
@@ -111,24 +122,26 @@ def update_trip_detail(
     for field, value in update_data.items():
         setattr(detail, field, value)
     
-    db.commit()
-    db.refresh(detail)
+    await db.commit()
+    await db.refresh(detail)
     return detail
 
 
 @router.delete("/{detail_id}")
-def delete_trip_detail(
+async def delete_trip_detail(
     trip_id: int,
     detail_id: int,
     current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """删除行程详情"""
     # 检查行程是否存在且属于当前用户
-    trip = db.query(Trip).filter(
+    stmt = select(Trip).where(
         Trip.id == trip_id,
         Trip.user_id == current_user.id
-    ).first()
+    )
+    result = await db.execute(stmt)
+    trip = result.scalar_one_or_none()
     
     if not trip:
         raise HTTPException(
@@ -137,10 +150,12 @@ def delete_trip_detail(
         )
     
     # 检查详情是否存在
-    detail = db.query(TripDetail).filter(
+    stmt = select(TripDetail).where(
         TripDetail.id == detail_id,
         TripDetail.trip_id == trip_id
-    ).first()
+    )
+    result = await db.execute(stmt)
+    detail = result.scalar_one_or_none()
     
     if not detail:
         raise HTTPException(
@@ -148,6 +163,6 @@ def delete_trip_detail(
             detail="行程详情不存在"
         )
     
-    db.delete(detail)
-    db.commit()
+    await db.delete(detail)
+    await db.commit()
     return {"message": "行程详情删除成功"}

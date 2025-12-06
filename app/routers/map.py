@@ -7,7 +7,7 @@ router = APIRouter(prefix="/api/map", tags=["map"])
 
 
 @router.get("/search")
-def map_search(
+async def map_search(
     query: str,
     location: str = None,
     radius: int = 5000,
@@ -25,7 +25,7 @@ def map_search(
 
 
 @router.get("/directions")
-def map_directions(
+async def map_directions(
     origin: str,
     destination: str,
     mode: str = "driving",
@@ -43,7 +43,7 @@ def map_directions(
 
 
 @router.get("/place/details")
-def place_details(
+async def place_details(
     place_id: str,
     current_user = Depends(get_current_active_user)
 ):

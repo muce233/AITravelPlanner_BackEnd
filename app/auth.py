@@ -4,7 +4,8 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from .config import settings
 from .database import get_db
@@ -44,23 +45,25 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     return encoded_jwt
 
 
-def get_user_by_username(db: Session, username: str) -> Optional[UserModel]:
+async def get_user_by_username(db: AsyncSession, username: str) -> Optional[UserModel]:
     """根据用户名获取用户"""
-    return db.query(UserModel).filter(UserModel.username == username).first()
+    result = await db.execute(select(UserModel).filter(UserModel.username == username))
+    return result.scalar_one_or_none()
 
 
-def get_user_by_phone(db: Session, phone_number: str) -> Optional[UserModel]:
+async def get_user_by_phone(db: AsyncSession, phone_number: str) -> Optional[UserModel]:
     """根据手机号获取用户"""
-    return db.query(UserModel).filter(UserModel.phone_number == phone_number).first()
+    result = await db.execute(select(UserModel).filter(UserModel.phone_number == phone_number))
+    return result.scalar_one_or_none()
 
 
-def authenticate_user(db: Session, username: str, password: str) -> Optional[UserModel]:
+async def authenticate_user(db: AsyncSession, username: str, password: str) -> Optional[UserModel]:
     """用户认证"""
     # 先尝试用户名登录
-    user = get_user_by_username(db, username)
+    user = await get_user_by_username(db, username)
     if not user:
         # 再尝试手机号登录
-        user = get_user_by_phone(db, username)
+        user = await get_user_by_phone(db, username)
     
     if not user:
         return None
@@ -71,7 +74,7 @@ def authenticate_user(db: Session, username: str, password: str) -> Optional[Use
 
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ) -> UserModel:
     """获取当前认证用户"""
     credentials_exception = HTTPException(
@@ -91,7 +94,7 @@ async def get_current_user(
     except JWTError:
         raise credentials_exception
     
-    user = get_user_by_username(db, username=token_data.username)
+    user = await get_user_by_username(db, username=token_data.username)
     if user is None:
         raise credentials_exception
     return user

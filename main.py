@@ -12,7 +12,7 @@ from app.middleware.rate_limit import setup_rate_limit_middleware
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     # 启动时创建数据库表
-    create_tables()
+    await create_tables()
     print("数据库表创建完成")
     yield
     # 关闭时清理资源

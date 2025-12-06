@@ -7,7 +7,7 @@ router = APIRouter(prefix="/api/speech", tags=["speech"])
 
 
 @router.post("/recognize", response_model=SpeechRecognitionResponse)
-def speech_recognize(
+async def speech_recognize(
     request: SpeechRecognitionRequest,
     current_user = Depends(get_current_active_user)
 ):
@@ -21,7 +21,7 @@ def speech_recognize(
 
 
 @router.post("/synthesize")
-def speech_synthesize(
+async def speech_synthesize(
     text: str,
     current_user = Depends(get_current_active_user)
 ):

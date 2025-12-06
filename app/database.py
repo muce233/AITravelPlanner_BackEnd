@@ -1,36 +1,41 @@
-from sqlalchemy import create_engine
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
 from .config import settings
 
-# 创建数据库引擎
-engine = create_engine(
-    settings.database_url,
+# 创建异步数据库引擎
+engine = create_async_engine(
+    settings.database_url.replace("postgresql://", "postgresql+asyncpg://"),
     pool_pre_ping=True,
     pool_recycle=300,
     echo=settings.debug
 )
 
-# 创建会话工厂
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+# 创建异步会话工厂
+AsyncSessionLocal = async_sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    bind=engine,
+    class_=AsyncSession
+)
 
 # 创建基类
 Base = declarative_base()
 
 
-def get_db():
-    """数据库依赖注入"""
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+async def get_db():
+    """异步数据库依赖注入"""
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session
+        finally:
+            await session.close()
 
 
-def create_tables():
-    """创建数据库表"""
+async def create_tables():
+    """异步创建数据库表"""
     # 导入所有模型以确保它们被注册到Base.metadata中
     from .models import User, Trip, TripDetail, Expense, Conversation, ConversationMessage, APILog
     
-    # 创建所有表
-    Base.metadata.create_all(bind=engine)
+    # 异步创建所有表
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)

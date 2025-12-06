@@ -1,7 +1,8 @@
 """对话会话管理服务"""
 from typing import List, Optional, Dict, Any
-from sqlalchemy.orm import Session
-from sqlalchemy import desc
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import desc, func
+from sqlalchemy.future import select
 import uuid
 from datetime import datetime
 
@@ -13,12 +14,12 @@ from ..schemas.chat import (
 
 
 class ConversationService:
-    """对话会话服务类"""
+    """对话会话管理服务"""
     
-    def __init__(self, db: Session):
+    def __init__(self, db: AsyncSession):
         self.db = db
     
-    def create_conversation(
+    async def create_conversation(
         self, 
         user_id: int, 
         request: CreateConversationRequest
@@ -36,19 +37,21 @@ class ConversationService:
         )
         
         self.db.add(conversation)
-        self.db.commit()
-        self.db.refresh(conversation)
+        await self.db.commit()
+        await self.db.refresh(conversation)
         
         return conversation
     
-    def get_conversation(self, conversation_id: str, user_id: int) -> Optional[ConversationModel]:
+    async def get_conversation(self, conversation_id: str, user_id: int) -> Optional[ConversationModel]:
         """获取对话详情"""
-        return self.db.query(ConversationModel).filter(
+        stmt = select(ConversationModel).where(
             ConversationModel.id == conversation_id,
             ConversationModel.user_id == user_id
-        ).first()
+        )
+        result = await self.db.execute(stmt)
+        return result.scalar_one_or_none()
     
-    def get_user_conversations(
+    async def get_user_conversations(
         self, 
         user_id: int, 
         page: int = 1, 
@@ -56,15 +59,22 @@ class ConversationService:
         active_only: bool = True
     ) -> ConversationListResponse:
         """获取用户对话列表"""
-        query = self.db.query(ConversationModel).filter(ConversationModel.user_id == user_id)
+        stmt = select(ConversationModel).where(ConversationModel.user_id == user_id)
         
         if active_only:
-            query = query.filter(ConversationModel.is_active == True)
+            stmt = stmt.where(ConversationModel.is_active == True)
         
-        total = query.count()
-        conversations = query.order_by(desc(ConversationModel.updated_at)).offset(
+        # 获取总数
+        count_stmt = select(func.count()).select_from(stmt.subquery())
+        total_result = await self.db.execute(count_stmt)
+        total = total_result.scalar()
+        
+        # 获取分页数据
+        stmt = stmt.order_by(desc(ConversationModel.updated_at)).offset(
             (page - 1) * page_size
-        ).limit(page_size).all()
+        ).limit(page_size)
+        result = await self.db.execute(stmt)
+        conversations = result.scalars().all()
         
         return ConversationListResponse(
             conversations=[
@@ -87,14 +97,14 @@ class ConversationService:
             page_size=page_size
         )
     
-    def update_conversation(
+    async def update_conversation(
         self, 
         conversation_id: str, 
         user_id: int, 
         request: UpdateConversationRequest
     ) -> Optional[ConversationModel]:
         """更新对话信息"""
-        conversation = self.get_conversation(conversation_id, user_id)
+        conversation = await self.get_conversation(conversation_id, user_id)
         if not conversation:
             return None
         
@@ -105,32 +115,32 @@ class ConversationService:
         
         conversation.updated_at = datetime.now()
         
-        self.db.commit()
-        self.db.refresh(conversation)
+        await self.db.commit()
+        await self.db.refresh(conversation)
         
         return conversation
     
-    def delete_conversation(self, conversation_id: str, user_id: int) -> bool:
+    async def delete_conversation(self, conversation_id: str, user_id: int) -> bool:
         """删除对话（软删除）"""
-        conversation = self.get_conversation(conversation_id, user_id)
+        conversation = await self.get_conversation(conversation_id, user_id)
         if not conversation:
             return False
         
         conversation.is_active = False
         conversation.updated_at = datetime.now()
         
-        self.db.commit()
-        self.db.refresh(conversation)
+        await self.db.commit()
+        await self.db.refresh(conversation)
         return True
     
-    def add_message_to_conversation(
+    async def add_message_to_conversation(
         self, 
         conversation_id: str, 
         user_id: int, 
         message: ChatMessage
     ) -> Optional[ConversationModel]:
         """向对话添加消息"""
-        conversation = self.get_conversation(conversation_id, user_id)
+        conversation = await self.get_conversation(conversation_id, user_id)
         if not conversation:
             return None
         
@@ -154,22 +164,22 @@ class ConversationService:
         if len(messages) == 1 and message.role == MessageRole.USER:
             conversation.title = message.content[:50] + "..." if len(message.content) > 50 else message.content
         
-        self.db.commit()
-        self.db.refresh(conversation)
+        await self.db.commit()
+        await self.db.refresh(conversation)
         
         return conversation
     
-    def clear_conversation_messages(self, conversation_id: str, user_id: int) -> Optional[Conversation]:
+    async def clear_conversation_messages(self, conversation_id: str, user_id: int) -> Optional[Conversation]:
         """清空对话消息"""
-        conversation = self.get_conversation(conversation_id, user_id)
+        conversation = await self.get_conversation(conversation_id, user_id)
         if not conversation:
             return None
         
         conversation.messages = []
         conversation.updated_at = datetime.now()
         
-        self.db.commit()
-        self.db.refresh(conversation)
+        await self.db.commit()
+        await self.db.refresh(conversation)
         
         return conversation
 
@@ -177,10 +187,10 @@ class ConversationService:
 class APILogService:
     """API调用日志服务"""
     
-    def __init__(self, db: Session):
+    def __init__(self, db: AsyncSession):
         self.db = db
     
-    def create_log(
+    async def create_log(
         self,
         user_id: int,
         endpoint: str,
@@ -208,36 +218,40 @@ class APILogService:
         )
         
         self.db.add(log)
-        self.db.commit()
-        self.db.refresh(log)
+        await self.db.commit()
+        await self.db.refresh(log)
         
         return log
     
-    def get_user_usage_stats(self, user_id: int) -> Dict[str, Any]:
+    async def get_user_usage_stats(self, user_id: int) -> Dict[str, Any]:
         """获取用户使用统计"""
         # 今日使用量
         today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-        today_stats = self.db.query(
+        today_stmt = select(
             APILog.prompt_tokens,
             APILog.completion_tokens,
             APILog.total_tokens,
             APILog.cost
-        ).filter(
+        ).where(
             APILog.user_id == user_id,
             APILog.created_at >= today_start
-        ).all()
+        )
+        today_result = await self.db.execute(today_stmt)
+        today_stats = today_result.all()
         
         # 本月使用量
         month_start = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        month_stats = self.db.query(
+        month_stmt = select(
             APILog.prompt_tokens,
             APILog.completion_tokens,
             APILog.total_tokens,
             APILog.cost
-        ).filter(
+        ).where(
             APILog.user_id == user_id,
             APILog.created_at >= month_start
-        ).all()
+        )
+        month_result = await self.db.execute(month_stmt)
+        month_stats = month_result.all()
         
         def calculate_stats(stats_list):
             if not stats_list:
@@ -256,8 +270,15 @@ class APILogService:
                 "call_count": len(stats_list)
             }
         
+        # 获取总使用量
+        total_stmt = select(APILog.prompt_tokens, APILog.completion_tokens, APILog.total_tokens, APILog.cost).where(
+            APILog.user_id == user_id
+        )
+        total_result = await self.db.execute(total_stmt)
+        total_stats = total_result.all()
+        
         return {
             "today": calculate_stats(today_stats),
             "this_month": calculate_stats(month_stats),
-            "total": calculate_stats(self.db.query(APILog).filter(APILog.user_id == user_id).all())
+            "total": calculate_stats(total_stats)
         }

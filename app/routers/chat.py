@@ -4,7 +4,7 @@ import json
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.responses import StreamingResponse
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth import get_current_active_user
 from ..database import get_db
@@ -39,7 +39,7 @@ async def get_api_status(current_user: UserModel = Depends(get_current_active_us
 async def create_chat_completion(
     request: chat.ChatRequest,
     current_user: UserModel = Depends(get_current_active_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """创建聊天补全（非流式）"""
     start_time = time.time()
@@ -130,7 +130,7 @@ async def create_chat_completion(
 async def create_chat_completion_stream(
     request: chat.ChatRequest,
     current_user: UserModel = Depends(get_current_active_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """创建聊天补全（流式）"""
     start_time = time.time()

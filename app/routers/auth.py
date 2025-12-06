@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import timedelta
 
 from ..database import get_db
@@ -11,12 +11,12 @@ router = APIRouter(prefix="/api/auth", tags=["authentication"])
 
 
 @router.post("/login", response_model=Token)
-def login_for_access_token(
+async def login_for_access_token(
     login_data: LoginRequest,
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """用户登录获取访问令牌"""
-    user = authenticate_user(db, login_data.username, login_data.password)
+    user = await authenticate_user(db, login_data.username, login_data.password)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
