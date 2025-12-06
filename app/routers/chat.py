@@ -88,7 +88,7 @@ async def create_chat_completion(
         
         # 记录API日志
         response_time = int((time.time() - start_time) * 1000)
-        await api_log_service.create_log(
+        api_log_service.create_log(
             user_id=current_user.id,
             endpoint="chat/completions",
             model=request.model,
@@ -111,7 +111,7 @@ async def create_chat_completion(
     except Exception as e:
         # 记录错误日志
         response_time = int((time.time() - start_time) * 1000)
-        await api_log_service.create_log(
+        api_log_service.create_log(
             user_id=current_user.id,
             endpoint="chat/completions",
             model=request.model if 'request' in locals() else None,
@@ -199,7 +199,7 @@ async def create_chat_completion_stream(
             
             # 记录API日志
             response_time = int((time.time() - start_time) * 1000)
-            await api_log_service.create_log(
+            api_log_service.create_log(
                 user_id=current_user.id,
                 endpoint="chat/completions/stream",
                 model=request.model,
@@ -222,7 +222,7 @@ async def create_chat_completion_stream(
     except Exception as e:
         # 记录错误日志
         response_time = int((time.time() - start_time) * 1000)
-        await api_log_service.create_log(
+        api_log_service.create_log(
             user_id=current_user.id,
             endpoint="chat/completions/stream",
             model=request.model if 'request' in locals() else None,

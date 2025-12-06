@@ -180,7 +180,7 @@ class APILogService:
     def __init__(self, db: Session):
         self.db = db
     
-    def log_api_call(
+    def create_log(
         self,
         user_id: int,
         endpoint: str,
