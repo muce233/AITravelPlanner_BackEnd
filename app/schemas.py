@@ -30,6 +30,11 @@ class User(UserBase):
 
 
 # 认证相关模型
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
 class Token(BaseModel):
     access_token: str
     token_type: str
