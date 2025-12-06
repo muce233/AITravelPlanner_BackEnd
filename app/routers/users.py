@@ -5,7 +5,7 @@ from typing import List
 from ..database import get_db
 from ..auth import get_password_hash, get_current_active_user
 from ..models import User as UserModel
-from ..schemas import User, UserCreate, UserUpdate
+from ..schemas.user import User, UserCreate, UserUpdate
 
 router = APIRouter(prefix="/api/users", tags=["users"])
 

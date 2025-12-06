@@ -4,7 +4,8 @@ from contextlib import asynccontextmanager
 
 from app.config import settings
 from app.database import create_tables
-from app.routers import users, auth, trips, trip_details, expenses, speech, map
+from app.routers import users, auth, trips, trip_details, expenses, speech, map, chat
+from app.middleware.rate_limit import setup_rate_limit_middleware
 
 
 @asynccontextmanager
@@ -35,6 +36,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 配置限流中间件
+setup_rate_limit_middleware(app)
+
 # 注册路由
 app.include_router(users.router)
 app.include_router(auth.router)
@@ -43,6 +47,7 @@ app.include_router(trip_details.router)
 app.include_router(expenses.router)
 app.include_router(speech.router)
 app.include_router(map.router)
+app.include_router(chat.router)
 
 
 @app.get("/")

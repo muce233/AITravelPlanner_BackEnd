@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from ..auth import get_current_active_user
-from ..schemas import SpeechRecognitionRequest, SpeechRecognitionResponse
+from ..schemas.speech import SpeechRecognitionRequest, SpeechRecognitionResponse
 
 router = APIRouter(prefix="/api/speech", tags=["speech"])
 

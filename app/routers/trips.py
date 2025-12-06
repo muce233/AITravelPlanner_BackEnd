@@ -5,7 +5,7 @@ from typing import List
 from ..database import get_db
 from ..auth import get_current_active_user
 from ..models import Trip, User
-from ..schemas import Trip, TripCreate, TripUpdate
+from ..schemas.trip import Trip, TripCreate, TripUpdate
 
 router = APIRouter(prefix="/api/trips", tags=["trips"])
 

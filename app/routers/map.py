@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from ..auth import get_current_active_user
-from ..schemas import MapSearchRequest, MapDirectionsRequest
+from ..schemas.map import MapSearchRequest, MapDirectionsRequest
 
 router = APIRouter(prefix="/api/map", tags=["map"])
 

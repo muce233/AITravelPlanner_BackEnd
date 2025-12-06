@@ -29,5 +29,8 @@ def get_db():
 
 def create_tables():
     """创建数据库表"""
-    from .models import Base
+    # 导入所有模型以确保它们被注册到Base.metadata中
+    from .models import User, Trip, TripDetail, Expense, Conversation, ConversationMessage, APILog
+    
+    # 创建所有表
     Base.metadata.create_all(bind=engine)

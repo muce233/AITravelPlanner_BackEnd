@@ -5,7 +5,7 @@ from datetime import timedelta
 from ..database import get_db
 from ..auth import authenticate_user, create_access_token
 from ..config import settings
-from ..schemas import Token, LoginRequest
+from ..schemas.auth import Token, LoginRequest
 
 router = APIRouter(prefix="/api/auth", tags=["authentication"])
 
