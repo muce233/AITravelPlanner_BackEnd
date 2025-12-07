@@ -8,7 +8,7 @@ from .ai import TripGenerationRequest
 from .speech import SpeechRecognitionRequest, SpeechRecognitionResponse
 from .map import MapSearchRequest, MapDirectionsRequest
 from .chat import (
-    ChatModel, MessageRole, ChatMessage, ChatRequest, 
+    MessageRole, ChatMessage, ChatRequest, 
     ChatChoice, UsageInfo, ChatResponse, StreamChatResponse
 )
 

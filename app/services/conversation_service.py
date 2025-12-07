@@ -6,9 +6,11 @@ from sqlalchemy.future import select
 import uuid
 from datetime import datetime
 
+from app.config import settings
+
 from ..models.conversation import Conversation as ConversationModel, ConversationMessage, APILog
 from ..schemas.chat import (
-    ChatMessage, MessageRole, ChatModel, Conversation,
+    ChatMessage, MessageRole, Conversation,
     CreateConversationRequest, UpdateConversationRequest, ConversationListResponse
 )
 
@@ -31,7 +33,7 @@ class ConversationService:
             id=conversation_id,
             title=request.title,
             user_id=user_id,
-            model=request.model.value if request.model else ChatModel.CHAT_MODEL.value,
+            model=settings.chat_model,
             messages=[],
             is_active=True
         )

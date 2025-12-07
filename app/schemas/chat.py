@@ -4,14 +4,6 @@ from typing import Optional, List, Dict, Any, Literal
 from datetime import datetime
 from enum import Enum
 
-
-class ChatModel(str, Enum):
-    """聊天可用模型枚举"""
-    CHAT_MODEL = "chat-model"
-    CODER_MODEL = "coder-model"
-    REASONER_MODEL = "reasoner-model"
-
-
 class MessageRole(str, Enum):
     """消息角色枚举"""
     USER = "user"
@@ -29,7 +21,6 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     """聊天请求模型"""
     messages: List[ChatMessage] = Field(..., description="消息历史列表")
-    model: ChatModel = Field(default=ChatModel.CHAT_MODEL, description="使用的模型")
     temperature: Optional[float] = Field(default=0.7, ge=0.0, le=2.0, description="温度参数")
     max_tokens: Optional[int] = Field(default=2048, ge=1, le=8192, description="最大生成token数")
     top_p: Optional[float] = Field(default=0.95, ge=0.0, le=1.0, description="Top-p采样参数")
@@ -88,14 +79,14 @@ class Conversation(BaseModel):
     messages: List[ChatMessage] = Field(default=[], description="消息列表")
     created_at: datetime = Field(default_factory=datetime.now, description="创建时间")
     updated_at: datetime = Field(default_factory=datetime.now, description="更新时间")
-    model: ChatModel = Field(default=ChatModel.CHAT_MODEL, description="使用的模型")
+    model: str = Field(default=None, description="使用的模型")
     is_active: bool = Field(default=True, description="是否活跃")
 
 
 class CreateConversationRequest(BaseModel):
     """创建对话请求模型"""
     title: str = Field(..., description="会话标题")
-    model: Optional[ChatModel] = Field(default=ChatModel.CHAT_MODEL, description="使用的模型")
+    model: Optional[str] = Field(default=None, description="使用的模型")
 
 
 class UpdateConversationRequest(BaseModel):
@@ -112,7 +103,6 @@ class ConversationResponse(BaseModel):
     messages: List[ChatMessage] = Field(default=[], description="消息列表")
     created_at: datetime = Field(..., description="创建时间")
     updated_at: datetime = Field(..., description="更新时间")
-    model: ChatModel = Field(..., description="使用的模型")
     is_active: bool = Field(..., description="是否活跃")
 
 
