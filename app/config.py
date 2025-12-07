@@ -16,10 +16,6 @@ class Settings(BaseSettings):
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
     
-    # AI服务配置
-    openai_api_key: Optional[str] = None
-    ai_service_url: str = "https://api.openai.com/v1"
-    
     # 聊天API配置
     chat_api_key: Optional[str] = None
     chat_api_url: str = "https://api.deepseek.com/v1"
