@@ -116,16 +116,7 @@ class ConversationResponse(BaseModel):
     is_active: bool = Field(..., description="是否活跃")
 
 
-class APIStatusResponse(BaseModel):
-    """API状态响应模型"""
-    status: str = Field(..., description="API状态")
-    version: str = Field(..., description="API版本")
-    models: List[str] = Field(..., description="可用模型列表")
 
-
-class ModelsResponse(BaseModel):
-    """模型列表响应模型"""
-    data: List[Dict[str, Any]] = Field(..., description="模型列表")
 
 
 class ErrorResponse(BaseModel):

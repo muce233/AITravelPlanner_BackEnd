@@ -114,15 +114,7 @@ curl -X POST "http://localhost:8000/api/auth/login" \
 
 ## 💬 智能聊天 (Chat)
 
-### 获取API状态
-- **端点**: `GET /api/chat/status`
-- **描述**: 获取聊天API状态和可用模型
-- **认证**: 需要
 
-### 获取模型列表
-- **端点**: `GET /api/chat/models`
-- **描述**: 获取可用AI模型列表
-- **认证**: 需要
 
 ### 聊天补全（非流式）
 - **端点**: `POST /api/chat/completions`

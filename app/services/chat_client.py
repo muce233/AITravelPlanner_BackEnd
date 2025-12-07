@@ -49,7 +49,6 @@ class ChatClient:
     async def chat_completion(
         self, 
         messages: list[chat.ChatMessage],
-        model: chat.ChatModel = chat.ChatModel.CHAT_MODEL,
         temperature: float = 0.7,
         max_tokens: int = 2048,
         stream: bool = False,
@@ -60,7 +59,7 @@ class ChatClient:
         
         request_data = chat.ChatRequest(
             messages=messages,
-            model=model,
+            model=settings.chat_model,
             temperature=temperature,
             max_tokens=max_tokens,
             stream=stream,
@@ -87,7 +86,6 @@ class ChatClient:
     async def chat_completion_stream(
         self,
         messages: list[chat.ChatMessage],
-        model: chat.ChatModel = chat.ChatModel.CHAT_MODEL,
         temperature: float = 0.7,
         max_tokens: int = 2048,
         **kwargs
@@ -97,7 +95,7 @@ class ChatClient:
         
         request_data = chat.ChatRequest(
             messages=messages,
-            model=model,
+            model=settings.chat_model,
             temperature=temperature,
             max_tokens=max_tokens,
             stream=True,
@@ -132,20 +130,8 @@ class ChatClient:
     
     async def get_available_models(self) -> list[str]:
         """获取可用模型列表"""
-        await self._initialize_client()
-        
-        try:
-            response = await self._client.get("/models")
-            response.raise_for_status()
-            
-            models_data = response.json()
-            return [model["id"] for model in models_data.get("data", [])]
-            
-        except HTTPStatusError as e:
-            await self._handle_api_error(e)
-        except Exception as e:
-            # 如果获取模型列表失败，返回默认模型
-            return ["chat-model", "coder-model", "reasoner-model"]
+        # 直接从配置中获取单个模型名称
+        return [settings.model]
     
     async def _handle_api_error(self, error: HTTPStatusError):
         """处理API错误"""

@@ -101,33 +101,7 @@
 
 ## 智能聊天接口 (Chat)
 
-### GET /api/chat/status
-**获取API状态**
 
-**响应体 (200):**
-```json
-{
-  "status": "active",
-  "version": "1.0.0",
-  "models": ["model1", "model2"]
-}
-```
-
-### GET /api/chat/models
-**获取模型列表**
-
-**响应体 (200):**
-```json
-{
-  "data": [
-    {
-      "id": "string",
-      "object": "model",
-      "created": 1704067200,
-      "owned_by": "chat-service"
-    }
-  ]
-}
 ```
 
 ### POST /api/chat/completions

@@ -17,22 +17,7 @@ from ..middleware.rate_limit import user_rate_limiter
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
 
-@router.get("/status", response_model=chat.APIStatusResponse)
-async def get_api_status(current_user: UserModel = Depends(get_current_active_user)):
-    """获取API状态"""
-    try:
-        models = await chat_service.get_available_models()
-        
-        return chat.APIStatusResponse(
-            status="active",
-            version="1.0.0",
-            models=models
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"获取API状态失败: {str(e)}"
-        )
+
 
 
 @router.post("/completions", response_model=chat.ChatResponse)
@@ -72,7 +57,6 @@ async def create_chat_completion(
         # 调用聊天服务
         response_data = await chat_service.chat_completion(
             messages=request.messages,
-            model=request.model,
             temperature=request.temperature,
             max_tokens=request.max_tokens,
             stream=False
@@ -165,7 +149,6 @@ async def create_chat_completion_stream(
             
             async for chunk in chat_service.chat_completion_stream(
                 messages=request.messages,
-                model=request.model,
                 temperature=request.temperature,
                 max_tokens=request.max_tokens
             ):
@@ -237,25 +220,7 @@ async def create_chat_completion_stream(
         )
 
 
-@router.get("/models", response_model=chat.ModelsResponse)
-async def get_models(current_user: UserModel = Depends(get_current_active_user)):
-    """获取可用模型列表"""
-    try:
-        models = await chat_service.get_available_models()
-        
-        return chat.ModelsResponse(
-            data=[{
-                "id": model,
-                "object": "model",
-                "created": int(time.time()),
-                "owned_by": "chat-service"
-            } for model in models]
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"获取模型列表失败: {str(e)}"
-        )
+
 
 
 # 对话管理接口

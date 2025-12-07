@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     # 聊天API配置
     chat_api_key: Optional[str] = None
     chat_api_url: str = "https://api.deepseek.com/v1"
+    chat_model: str = "deepseek-chat"
     
     # 语音识别服务配置
     speech_recognition_api_key: Optional[str] = None
