@@ -49,6 +49,7 @@ async def create_chat_completion(
         # 添加用户消息到对话
         user_message = await conversation_service.add_message(
             conversation_id=conversation.id,
+            user_id=current_user.id,
             role="user",
             content=request.messages[-1].content if request.messages else "",
             name=request.messages[-1].name if request.messages and hasattr(request.messages[-1], 'name') else None
@@ -175,6 +176,7 @@ async def create_chat_completion_stream(
             # 添加AI回复到对话
             ai_message = await conversation_service.add_message(
                 conversation_id=conversation.id,
+                user_id=current_user.id,
                 role="assistant",
                 content=full_content,
                 tokens=len(full_content) // 4  # 粗略估算token数量
