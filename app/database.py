@@ -15,7 +15,8 @@ AsyncSessionLocal = async_sessionmaker(
     autocommit=False,
     autoflush=False,
     bind=engine,
-    class_=AsyncSession
+    class_=AsyncSession,
+    expire_on_commit=False  # 添加这一行，防止提交后对象属性过期
 )
 
 # 创建基类
