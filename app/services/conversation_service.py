@@ -80,7 +80,7 @@ class ConversationService:
         
         return ConversationListResponse(
             conversations=[
-                chat.Conversation(
+                Conversation(
                     id=conv.id,
                     title=conv.title,
                     user_id=conv.user_id,

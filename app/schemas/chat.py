@@ -79,8 +79,8 @@ class Conversation(BaseModel):
     user_id: int = Field(..., description="用户ID")
     messages: List[ChatMessage] = Field(default=[], description="消息列表")
     created_at: datetime = Field(default_factory=datetime.now, description="创建时间")
-    updated_at: datetime = Field(default_factory=datetime.now, description="更新时间")
-    model: str = Field(default=None, description="使用的模型")
+    updated_at: Optional[datetime] = Field(None, description="更新时间")
+    model: Optional[str] = Field(None, description="使用的模型")
     is_active: bool = Field(default=True, description="是否活跃")
 
 
@@ -103,7 +103,7 @@ class ConversationResponse(BaseModel):
     user_id: int = Field(..., description="用户ID")
     messages: List[ChatMessage] = Field(default=[], description="消息列表")
     created_at: datetime = Field(..., description="创建时间")
-    updated_at: datetime = Field(..., description="更新时间")
+    updated_at: Optional[datetime] = Field(None, description="更新时间")
     is_active: bool = Field(..., description="是否活跃")
 
 
