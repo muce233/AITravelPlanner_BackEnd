@@ -157,7 +157,9 @@ async def create_chat_completion_stream(
                 max_tokens=request.max_tokens
             ):
                 if chunk.choices and chunk.choices[0].delta:
-                    content = chunk.choices[0].delta.content or ""
+                    # 正确访问字典类型的delta字段
+                    delta_dict = chunk.choices[0].delta
+                    content = delta_dict.get('content', '') or ""
                     full_content += content
                     
                     # 发送SSE格式的数据
@@ -168,7 +170,7 @@ async def create_chat_completion_stream(
                         'model': chunk.model,
                         'choices': [{
                             'index': chunk.choices[0].index,
-                            'delta': chunk.choices[0].delta,
+                            'delta': delta_dict,
                             'finish_reason': chunk.choices[0].finish_reason
                         }]
                     })}\n\n"
