@@ -151,54 +151,80 @@ async def create_chat_completion_stream(
         async def generate():
             full_content = ""
             
-            async for chunk in chat_service.chat_completion_stream(
-                messages=request.messages,
-                temperature=request.temperature,
-                max_tokens=request.max_tokens
-            ):
-                if chunk.choices and chunk.choices[0].delta:
-                    # 正确访问字典类型的delta字段
-                    delta_dict = chunk.choices[0].delta
-                    content = delta_dict.get('content', '') or ""
-                    full_content += content
+            try:
+                async for chunk in chat_service.chat_completion_stream(
+                    messages=request.messages,
+                    temperature=request.temperature,
+                    max_tokens=request.max_tokens
+                ):
+                    if chunk.choices and chunk.choices[0].delta:
+                        # 正确访问字典类型的delta字段
+                        delta_dict = chunk.choices[0].delta
+                        content = delta_dict.get('content', '') or ""
+                        full_content += content
+                        
+                        # 发送SSE格式的数据
+                        yield f"data: {json.dumps({
+                            'id': chunk.id,
+                            'object': chunk.object,
+                            'created': chunk.created,
+                            'model': chunk.model,
+                            'choices': [{
+                                'index': chunk.choices[0].index,
+                                'delta': delta_dict,
+                                'finish_reason': chunk.choices[0].finish_reason
+                            }]
+                        })}\n\n"
                     
-                    # 发送SSE格式的数据
-                    yield f"data: {json.dumps({
-                        'id': chunk.id,
-                        'object': chunk.object,
-                        'created': chunk.created,
-                        'model': chunk.model,
-                        'choices': [{
-                            'index': chunk.choices[0].index,
-                            'delta': delta_dict,
-                            'finish_reason': chunk.choices[0].finish_reason
-                        }]
-                    })}\n\n"
+                    # 发送心跳保持连接
+                    yield "data: {}\n\n"
                 
-                # 发送心跳保持连接
-                yield "data: {}\n\n"
-            
-            # 添加AI回复到对话
-            ai_message = await conversation_service.add_message(
-                conversation_id=conversation.id,
-                user_id=current_user.id,
-                role="assistant",
-                content=full_content,
-                tokens=len(full_content) // 4  # 粗略估算token数量
-            )
-            
-            # 记录API日志
-            response_time = int((time.time() - start_time) * 1000)
-            await api_log_service.create_log(
-                user_id=current_user.id,
-                endpoint="chat/completions/stream",
-                model=request.model,
-                response_time=response_time,
-                status_code=200
-            )
-            
-            # 发送结束信号
-            yield "data: [DONE]\n\n"
+                # 添加AI回复到对话
+                ai_message = await conversation_service.add_message(
+                    conversation_id=conversation.id,
+                    user_id=current_user.id,
+                    role="assistant",
+                    content=full_content,
+                    tokens=len(full_content) // 4  # 粗略估算token数量
+                )
+                
+                # 记录API日志
+                response_time = int((time.time() - start_time) * 1000)
+                await api_log_service.create_log(
+                    user_id=current_user.id,
+                    endpoint="chat/completions/stream",
+                    model=request.model,
+                    response_time=response_time,
+                    status_code=200
+                )
+                
+                # 发送结束信号
+                yield "data: [DONE]\n\n"
+                
+            except Exception as e:
+                # 即使流式响应失败，也要保存已收到的内容
+                if full_content:
+                    ai_message = await conversation_service.add_message(
+                        conversation_id=conversation.id,
+                        user_id=current_user.id,
+                        role="assistant",
+                        content=full_content,
+                        tokens=len(full_content) // 4
+                    )
+                
+                # 记录错误日志
+                response_time = int((time.time() - start_time) * 1000)
+                await api_log_service.create_log(
+                    user_id=current_user.id,
+                    endpoint="chat/completions/stream",
+                    model=request.model,
+                    response_time=response_time,
+                    status_code=500,
+                    error_message=str(e)
+                )
+                
+                # 发送错误信号
+                yield f"data: {json.dumps({'error': str(e)})}\n\n"
         
         return StreamingResponse(
             generate(),
@@ -293,7 +319,7 @@ async def get_conversation(
     """获取对话详情"""
     try:
         conversation_service = ConversationService(db)
-        conversation = await conversation_service.get_conversation(
+        conversation = await conversation_service.get_conversation_with_messages(
             conversation_id=conversation_id,
             user_id=current_user.id
         )
@@ -304,25 +330,13 @@ async def get_conversation(
                 detail="对话不存在"
             )
         
-        return chat.Conversation(
-            id=conversation.id,
-            title=conversation.title,
-            user_id=conversation.user_id,
-            messages=[
-                chat.ChatMessage(role=chat.MessageRole(msg["role"]), content=msg["content"])
-                for msg in conversation.messages
-            ],
-            created_at=conversation.created_at,
-            updated_at=conversation.updated_at,
-            model=conversation.model,
-            is_active=conversation.is_active
-        )
+        return conversation
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"获取对话详情失败: {str(e)}"
+            detail=f"获取对话失败: {str(e)}"
         )
 
 
@@ -348,19 +362,13 @@ async def update_conversation(
                 detail="对话不存在"
             )
         
-        return chat.Conversation(
-            id=conversation.id,
-            title=conversation.title,
-            user_id=conversation.user_id,
-            messages=[
-                chat.ChatMessage(role=chat.MessageRole(msg["role"]), content=msg["content"])
-                for msg in conversation.messages
-            ],
-            created_at=conversation.created_at,
-            updated_at=conversation.updated_at,
-            model=conversation.model,
-            is_active=conversation.is_active
+        # 获取更新后的对话详情（包含消息）
+        conversation_with_messages = await conversation_service.get_conversation_with_messages(
+            conversation_id=conversation_id,
+            user_id=current_user.id
         )
+        
+        return conversation_with_messages
     except HTTPException:
         raise
     except Exception as e:

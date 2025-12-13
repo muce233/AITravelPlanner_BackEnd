@@ -53,6 +53,40 @@ class ConversationService:
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
     
+    async def get_conversation_with_messages(self, conversation_id: str, user_id: int) -> Optional[Conversation]:
+        """获取对话详情（包含消息）"""
+        # 获取对话基本信息
+        conversation = await self.get_conversation(conversation_id, user_id)
+        if not conversation:
+            return None
+        
+        # 获取对话的消息列表
+        stmt = select(ConversationMessage).where(
+            ConversationMessage.conversation_id == conversation_id
+        ).order_by(ConversationMessage.created_at)
+        result = await self.db.execute(stmt)
+        messages = result.scalars().all()
+        
+        # 转换为ChatMessage格式
+        chat_messages = [
+            ChatMessage(
+                role=MessageRole(msg.role),
+                content=msg.content,
+                name=msg.name
+            ) for msg in messages
+        ]
+        
+        return Conversation(
+            id=conversation.id,
+            title=conversation.title,
+            user_id=conversation.user_id,
+            messages=chat_messages,
+            created_at=conversation.created_at,
+            updated_at=conversation.updated_at,
+            model=conversation.model,
+            is_active=conversation.is_active
+        )
+    
     async def get_user_conversations(
         self, 
         user_id: int, 
@@ -78,22 +112,40 @@ class ConversationService:
         result = await self.db.execute(stmt)
         conversations = result.scalars().all()
         
+        # 为每个对话获取最新的消息（用于显示预览）
+        conversation_list = []
+        for conv in conversations:
+            # 获取对话的最新消息
+            stmt = select(ConversationMessage).where(
+                ConversationMessage.conversation_id == conv.id
+            ).order_by(desc(ConversationMessage.created_at)).limit(10)  # 只获取最近10条消息作为预览
+            
+            result = await self.db.execute(stmt)
+            messages = result.scalars().all()
+            messages.reverse()  # 按时间顺序排列
+            
+            # 转换为ChatMessage格式
+            chat_messages = [
+                ChatMessage(
+                    role=MessageRole(msg.role),
+                    content=msg.content,
+                    name=msg.name
+                ) for msg in messages
+            ]
+            
+            conversation_list.append(Conversation(
+                id=conv.id,
+                title=conv.title,
+                user_id=conv.user_id,
+                messages=chat_messages,
+                created_at=conv.created_at,
+                updated_at=conv.updated_at,
+                model=conv.model,
+                is_active=conv.is_active
+            ))
+        
         return ConversationListResponse(
-            conversations=[
-                Conversation(
-                    id=conv.id,
-                    title=conv.title,
-                    user_id=conv.user_id,
-                    messages=[
-                        ChatMessage(role=MessageRole(msg["role"]), content=msg["content"])
-                        for msg in conv.messages
-                    ],
-                    created_at=conv.created_at,
-                    updated_at=conv.updated_at,
-                    model=conv.model,
-                    is_active=conv.is_active
-                ) for conv in conversations
-            ],
+            conversations=conversation_list,
             total=total,
             page=page,
             page_size=page_size
@@ -177,72 +229,59 @@ class ConversationService:
         name: Optional[str] = None,
         tokens: Optional[int] = None
     ) -> Optional[ConversationModel]:
-        """向对话添加消息（简化版本）"""
+        """向对话添加消息（使用conversation_messages表）"""
+        # 验证参数
+        if not content or not content.strip():
+            return None
+            
         conversation = await self.get_conversation(conversation_id, user_id)
         if not conversation:
             return None
         
-        # 将消息添加到消息列表
-        messages = conversation.messages or []
-        messages.append({
-            "role": role,
-            "content": content,
-            "name": name,
-            "tokens": tokens,
-            "timestamp": datetime.now().isoformat()
-        })
-        
-        # 限制消息历史长度（保留最近50条消息）
-        if len(messages) > 50:
-            messages = messages[-50:]
-        
-        conversation.messages = messages
-        conversation.updated_at = datetime.now()
-        
-        # 如果是第一条用户消息，更新对话标题
-        if len(messages) == 1 and role == "user":
-            conversation.title = content[:50] + "..." if len(content) > 50 else content
-        
-        await self.db.commit()
-        await self.db.refresh(conversation)
-        
-        return conversation
+        try:
+            # 创建新的消息记录
+            message = ConversationMessage(
+                conversation_id=conversation_id,
+                role=role,
+                content=content.strip(),
+                name=name,
+                tokens=tokens or 0
+            )
+            
+            # 验证消息数据
+            if not message.role or not message.content:
+                return None
+            
+            # 保存消息到数据库
+            self.db.add(message)
+            
+            # 更新对话的更新时间
+            conversation.updated_at = datetime.now()
+            
+            # 如果是第一条用户消息，更新对话标题
+            # 需要查询当前对话的消息数量
+            from sqlalchemy import func
+            stmt = select(func.count(ConversationMessage.id)).where(
+                ConversationMessage.conversation_id == conversation_id
+            )
+            result = await self.db.execute(stmt)
+            message_count = result.scalar()
+            
+            if message_count == 0 and role == "user":
+                conversation.title = content[:50] + "..." if len(content) > 50 else content
+            
+            await self.db.commit()
+            await self.db.refresh(conversation)
+            
+            return conversation
+            
+        except Exception as e:
+            # 回滚事务
+            await self.db.rollback()
+            print(f"添加消息失败: {str(e)}")
+            return None
     
-    async def add_message_to_conversation(
-        self, 
-        conversation_id: str, 
-        user_id: int, 
-        message: ChatMessage
-    ) -> Optional[ConversationModel]:
-        """向对话添加消息"""
-        conversation = await self.get_conversation(conversation_id, user_id)
-        if not conversation:
-            return None
-        
-        # 将消息添加到消息列表
-        messages = conversation.messages or []
-        messages.append({
-            "role": message.role.value,
-            "content": message.content,
-            "name": message.name,
-            "timestamp": datetime.now().isoformat()
-        })
-        
-        # 限制消息历史长度（保留最近50条消息）
-        if len(messages) > 50:
-            messages = messages[-50:]
-        
-        conversation.messages = messages
-        conversation.updated_at = datetime.now()
-        
-        # 如果是第一条用户消息，更新对话标题
-        if len(messages) == 1 and message.role == MessageRole.USER:
-            conversation.title = message.content[:50] + "..." if len(message.content) > 50 else message.content
-        
-        await self.db.commit()
-        await self.db.refresh(conversation)
-        
-        return conversation
+
     
     async def clear_conversation_messages(self, conversation_id: str, user_id: int) -> Optional[Conversation]:
         """清空对话消息"""
@@ -250,13 +289,29 @@ class ConversationService:
         if not conversation:
             return None
         
-        conversation.messages = []
-        conversation.updated_at = datetime.now()
-        
-        await self.db.commit()
-        await self.db.refresh(conversation)
-        
-        return conversation
+        try:
+            # 删除conversation_messages表中的相关记录
+            stmt = select(ConversationMessage).where(
+                ConversationMessage.conversation_id == conversation_id
+            )
+            result = await self.db.execute(stmt)
+            messages = result.scalars().all()
+            
+            for message in messages:
+                await self.db.delete(message)
+            
+            # 更新对话的更新时间
+            conversation.updated_at = datetime.now()
+            
+            await self.db.commit()
+            await self.db.refresh(conversation)
+            
+            return conversation
+            
+        except Exception as e:
+            await self.db.rollback()
+            print(f"清空对话消息失败: {str(e)}")
+            return None
 
 
 class APILogService:
