@@ -64,9 +64,7 @@ async def create_chat_completion_stream(
             
             try:
                 async for chunk in chat_service.chat_completion_stream(
-                    messages=request.messages,
-                    temperature=request.temperature,
-                    max_tokens=request.max_tokens
+                    messages=request.messages
                 ):
                     if chunk.choices and chunk.choices[0].delta:
                         # 正确访问字典类型的delta字段

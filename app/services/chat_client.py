@@ -50,22 +50,22 @@ class ChatClient:
     
     async def chat_completion_stream(
         self,
-        messages: list[chat.ChatMessage],
-        temperature: float = 0.7,
-        max_tokens: int = 2048,
-        **kwargs
+        messages: list[chat.ChatMessage]
     ) -> AsyncGenerator[str, None]:
         """流式聊天补全接口"""
         await self._initialize_client()
         
         request_data = chat.ChatRequest(
-            messages=messages,
-            model=settings.chat_model,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            stream=True,
-            **kwargs
+            messages=messages
         ).dict(exclude_none=True)
+        
+        # 添加后端固定的参数
+        request_data.update({
+            "model": settings.chat_model,
+            "temperature": 0.7,
+            "max_tokens": 2048,
+            "stream": True
+        })
         
         try:
             async with self._client.stream(
