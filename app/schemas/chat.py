@@ -108,9 +108,21 @@ class ErrorResponse(BaseModel):
     details: Optional[Dict[str, Any]] = Field(None, description="错误详情")
 
 
+class ConversationBasicInfo(BaseModel):
+    """对话基本信息模型（包含最新消息预览）"""
+    id: str = Field(..., description="会话ID")
+    title: str = Field(..., description="会话标题")
+    user_id: int = Field(..., description="用户ID")
+    created_at: datetime = Field(..., description="创建时间")
+    updated_at: Optional[datetime] = Field(None, description="更新时间")
+    model: Optional[str] = Field(None, description="使用的模型")
+    is_active: bool = Field(default=True, description="是否活跃")
+    latest_message_preview: Optional[str] = Field(None, description="最新消息预览")
+
+
 class ConversationListResponse(BaseModel):
     """对话列表响应模型"""
-    conversations: List[Conversation] = Field(..., description="对话列表")
+    conversations: List[ConversationBasicInfo] = Field(..., description="对话列表")
     total: int = Field(..., description="总对话数")
     page: int = Field(..., description="当前页码")
     page_size: int = Field(..., description="每页大小")

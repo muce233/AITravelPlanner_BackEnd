@@ -88,15 +88,6 @@ async def create_chat_completion_stream(
                     # 发送心跳保持连接
                     yield "data: {}\n\n"
                 
-                # 添加AI回复到对话
-                ai_message = await conversation_service.add_message(
-                    conversation_id=conversation.id,
-                    user_id=current_user.id,
-                    role="assistant",
-                    content=full_content,
-                    tokens=len(full_content) // 4  # 粗略估算token数量
-                )
-                
                 # 记录API日志
                 response_time = int((time.time() - start_time) * 1000)
                 await api_log_service.create_log(
@@ -111,16 +102,6 @@ async def create_chat_completion_stream(
                 yield "data: [DONE]\n\n"
                 
             except Exception as e:
-                # 即使流式响应失败，也要保存已收到的内容
-                if full_content:
-                    ai_message = await conversation_service.add_message(
-                        conversation_id=conversation.id,
-                        user_id=current_user.id,
-                        role="assistant",
-                        content=full_content,
-                        tokens=len(full_content) // 4
-                    )
-                
                 # 记录错误日志
                 response_time = int((time.time() - start_time) * 1000)
                 await api_log_service.create_log(
@@ -134,6 +115,17 @@ async def create_chat_completion_stream(
                 
                 # 发送错误信号
                 yield f"data: {json.dumps({'error': str(e)})}\n\n"
+                
+            finally:
+                # 无论成功还是失败，都保存AI消息（但只保存一次）
+                if full_content:
+                    ai_message = await conversation_service.add_message(
+                        conversation_id=conversation.id,
+                        user_id=current_user.id,
+                        role="assistant",
+                        content=full_content,
+                        tokens=len(full_content) // 4
+                    )
         
         return StreamingResponse(
             generate(),

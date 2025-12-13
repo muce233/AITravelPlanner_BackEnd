@@ -10,7 +10,7 @@ from app.config import settings
 
 from ..models.conversation import Conversation as ConversationModel, ConversationMessage, APILog
 from ..schemas.chat import (
-    ChatMessage, MessageRole, Conversation,
+    ChatMessage, MessageRole, Conversation, ConversationBasicInfo,
     CreateConversationRequest, UpdateConversationRequest, ConversationListResponse
 )
 
@@ -94,7 +94,7 @@ class ConversationService:
         page_size: int = 20,
         active_only: bool = True
     ) -> ConversationListResponse:
-        """获取用户对话列表"""
+        """获取用户对话列表（包含最新消息预览）"""
         stmt = select(ConversationModel).where(ConversationModel.user_id == user_id)
         
         if active_only:
@@ -112,36 +112,35 @@ class ConversationService:
         result = await self.db.execute(stmt)
         conversations = result.scalars().all()
         
-        # 为每个对话获取最新的消息（用于显示预览）
+        # 为每个对话获取最新一条消息作为预览
         conversation_list = []
         for conv in conversations:
-            # 获取对话的最新消息
-            stmt = select(ConversationMessage).where(
+            # 获取该对话的最新一条消息
+            latest_message_stmt = select(ConversationMessage).where(
                 ConversationMessage.conversation_id == conv.id
-            ).order_by(desc(ConversationMessage.created_at)).limit(10)  # 只获取最近10条消息作为预览
+            ).order_by(desc(ConversationMessage.created_at)).limit(1)
             
-            result = await self.db.execute(stmt)
-            messages = result.scalars().all()
-            messages.reverse()  # 按时间顺序排列
+            latest_message_result = await self.db.execute(latest_message_stmt)
+            latest_message = latest_message_result.scalar_one_or_none()
             
-            # 转换为ChatMessage格式
-            chat_messages = [
-                ChatMessage(
-                    role=MessageRole(msg.role),
-                    content=msg.content,
-                    name=msg.name
-                ) for msg in messages
-            ]
+            # 生成预览文本
+            latest_message_preview = None
+            if latest_message:
+                # 截取前30个字符作为预览
+                preview_text = latest_message.content[:30]
+                if len(latest_message.content) > 30:
+                    preview_text += "..."
+                latest_message_preview = preview_text
             
-            conversation_list.append(Conversation(
+            conversation_list.append(ConversationBasicInfo(
                 id=conv.id,
                 title=conv.title,
                 user_id=conv.user_id,
-                messages=chat_messages,
                 created_at=conv.created_at,
                 updated_at=conv.updated_at,
                 model=conv.model,
-                is_active=conv.is_active
+                is_active=conv.is_active,
+                latest_message_preview=latest_message_preview
             ))
         
         return ConversationListResponse(
