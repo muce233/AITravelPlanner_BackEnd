@@ -46,42 +46,7 @@ class ChatClient:
             await self._client.aclose()
             self._client = None
     
-    async def chat_completion(
-        self, 
-        messages: list[chat.ChatMessage],
-        temperature: float = 0.7,
-        max_tokens: int = 2048,
-        stream: bool = False,
-        **kwargs
-    ) -> chat.ChatResponse:
-        """聊天补全接口"""
-        await self._initialize_client()
-        
-        request_data = chat.ChatRequest(
-            messages=messages,
-            model=settings.chat_model,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            stream=stream,
-            **kwargs
-        ).dict(exclude_none=True)
-        
-        try:
-            response = await self._client.post(
-                "/chat/completions",
-                json=request_data
-            )
-            response.raise_for_status()
-            
-            return chat.ChatResponse(**response.json())
-            
-        except HTTPStatusError as e:
-            await self._handle_api_error(e)
-        except Exception as e:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"聊天API调用失败: {str(e)}"
-            )
+
     
     async def chat_completion_stream(
         self,
