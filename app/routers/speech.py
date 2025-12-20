@@ -4,7 +4,7 @@ import json
 import logging
 from typing import Dict, Any
 
-from fastapi import APIRouter, Depends, HTTPException, status, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, status, WebSocket, WebSocketDisconnect, Body
 from fastapi.responses import JSONResponse
 
 from ..auth import get_current_active_user
@@ -108,24 +108,14 @@ async def websocket_realtime_speech(
         # 处理音频数据流
         while True:
             try:
-                data = await websocket.receive_text()
-                audio_chunk = AudioChunkData(**json.loads(data))
-                
-                # 验证会话ID
-                if audio_chunk.session_id != session_id:
-                    await websocket.send_text(json.dumps({
-                        "error": "会话ID不匹配"
-                    }))
-                    continue
-                
-                # 解码音频数据
-                audio_data = base64.b64decode(audio_chunk.audio_data)
+                # 接收二进制音频数据
+                data = await websocket.receive_bytes()
                 
                 # 发送音频数据到识别服务
                 success = await service.send_audio_data(
                     session_id=session_id,
-                    audio_data=audio_data,
-                    is_final=audio_chunk.is_final
+                    audio_data=data,
+                    is_final=False  # 实时流中通常不是最终数据块
                 )
                 
                 if not success:
@@ -193,25 +183,19 @@ async def start_realtime_session(
 @router.post("/realtime/{session_id}/audio")
 async def send_audio_data(
     session_id: str,
-    audio_chunk: AudioChunkData,
+    audio_data: bytes = Body(..., media_type="application/octet-stream"),
+    is_final: bool = Body(default=False),
     current_user = Depends(get_current_active_user)
 ):
     """发送音频数据到实时会话"""
     try:
         service = get_speech_service()
         
-        # 验证会话ID
-        if audio_chunk.session_id != session_id:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="会话ID不匹配")
-        
-        # 解码音频数据
-        audio_data = base64.b64decode(audio_chunk.audio_data)
-        
         # 发送音频数据
         success = await service.send_audio_data(
             session_id=session_id,
             audio_data=audio_data,
-            is_final=audio_chunk.is_final
+            is_final=is_final
         )
         
         if success:

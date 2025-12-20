@@ -10,7 +10,7 @@ from enum import Enum
 import dashscope
 from dashscope.audio.asr import Recognition, RecognitionCallback
 from dashscope.audio.qwen_omni import OmniRealtimeConversation, OmniRealtimeCallback
-from dashscope.audio.qwen_omni.common import MultiModality, AudioFormat
+from dashscope.audio.qwen_omni import MultiModality, AudioFormat
 
 from ..schemas.speech import (
     ASRModelType, AudioFormat as SpeechAudioFormat, LanguageCode, 
@@ -338,9 +338,9 @@ class SpeechRecognitionService:
             return False
     
     async def _send_fun_asr_audio(self, recognition: Recognition, audio_data: bytes, is_final: bool) -> bool:
-        """发送音频数据到Fun-ASR"""
+        """发送音频数据到Fun-ASR - 直接使用二进制数据"""
         try:
-            # Fun-ASR通过send_audio_frame方法发送音频数据
+            # Fun-ASR通过send_audio_frame方法发送二进制音频数据
             recognition.send_audio_frame(audio_data)
             if is_final:
                 recognition.stop()
@@ -348,12 +348,12 @@ class SpeechRecognitionService:
         except Exception as e:
             self.logger.error(f"Fun-ASR发送音频失败: {e}")
             return False
-    
+
     async def _send_qwen_asr_audio(self, conversation: OmniRealtimeConversation, 
                                  audio_data: bytes, is_final: bool) -> bool:
-        """发送音频数据到Qwen-ASR"""
+        """发送音频数据到Qwen-ASR - 将二进制转为base64传输"""
         try:
-            # 将音频数据转换为base64
+            # 将二进制音频数据转换为base64
             audio_base64 = base64.b64encode(audio_data).decode('utf-8')
             
             # 追加音频数据
