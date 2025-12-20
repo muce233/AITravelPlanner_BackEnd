@@ -79,11 +79,8 @@ async def websocket_realtime_speech(
     try:
         service = get_speech_service()
         
-        # 接收初始配置
-        config_data = await websocket.receive_text()
-        config = json.loads(config_data)
-        
-        model_type = ASRModelType(config.get('model_type', ASRModelType.FUN_ASR_REALTIME))
+        # 使用后端配置的默认模型类型
+        model_type = service.config.model_type
         
         # 定义转录回调函数
         async def on_transcription(text: str, is_final: bool):
@@ -180,7 +177,7 @@ async def start_realtime_session(
         # 实时识别主要通过WebSocket接口实现
         success = await service.start_realtime_session(
             session_id=request.session_id,
-            model_type=request.model_type
+            model_type=service.config.model_type
         )
         
         if success:
