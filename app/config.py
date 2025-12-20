@@ -21,9 +21,10 @@ class Settings(BaseSettings):
     chat_api_url: str = "https://api.deepseek.com/v1"
     chat_model: str = "deepseek-chat"
     
-    # 语音识别服务配置
-    speech_recognition_api_key: Optional[str] = None
-    speech_service_url: str = "https://api.xfyun.cn/v1"
+    # 阿里百炼语音识别配置
+    dashscope_api_key: Optional[str] = None
+    dashscope_speech_model: str = "fun-asr-realtime"
+    vad_enabled: bool = True
     
     # 地图服务配置
     amap_api_key: Optional[str] = None

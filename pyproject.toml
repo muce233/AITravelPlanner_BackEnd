@@ -24,6 +24,7 @@ dependencies = [
     "requests>=2.31.0",
     "python-dateutil>=2.8.2",
     "slowapi>=0.1.9",
+    "dashscope>=1.14.0",
 ]
 
 [project.optional-dependencies]
