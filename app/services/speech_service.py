@@ -33,7 +33,7 @@ class ASRServiceError(Exception):
 class FunASRCallback(RecognitionCallback):
     """Fun-ASR实时识别回调类"""
     
-    def __init__(self, on_transcription: Callable[[str, bool], None]):
+    def __init__(self, on_transcription: Callable[[str], None]):
         self.on_transcription = on_transcription
         self.last_text = ""
     
@@ -42,9 +42,8 @@ class FunASRCallback(RecognitionCallback):
         try:
             if hasattr(message, 'sentence'):
                 text = message.sentence
-                is_final = True  # Fun-ASR通常返回最终结果
                 if text and text != self.last_text:
-                    self.on_transcription(text, is_final)
+                    self.on_transcription(text)
                     self.last_text = text
         except Exception as e:
             logging.error(f"Fun-ASR回调处理错误: {e}")
@@ -61,21 +60,27 @@ class FunASRCallback(RecognitionCallback):
 class QwenASRCallback(OmniRealtimeCallback):
     """Qwen-ASR实时识别回调类"""
     
-    def __init__(self, on_transcription: Callable[[str, bool], None]):
+    def __init__(self, on_transcription: Callable[[str], None]):
         self.on_transcription = on_transcription
         self.last_text = ""
     
     def on_event(self, event):
         """处理识别事件"""
         try:
-            if event.get('type') == 'transcription.text.delta':
-                text = event.get('delta', '')
-                is_final = event.get('is_final', False)
-                
-                if text and (text != self.last_text or is_final):
-                    self.on_transcription(text, is_final)
-                    if is_final:
-                        self.last_text = text
+            # 处理语音识别结果事件
+            if event.get('type') == 'conversation.item.input_audio_transcription.text':
+                text = event.get('text', '')
+                if text and text != self.last_text:
+                    self.on_transcription(text)
+                    self.last_text = text
+            # 处理语音停止事件
+            elif event.get('type') == 'input_audio_buffer.speech_stopped':
+                # 可以在这里处理语音结束后的逻辑
+                pass
+            # 处理错误事件
+            elif event.get('type') == 'error':
+                error_info = event.get('error', {})
+                logging.error(f"Qwen-ASR错误: {error_info.get('message', '未知错误')}")
                         
         except Exception as e:
             logging.error(f"Qwen-ASR回调处理错误: {e}")
@@ -86,7 +91,15 @@ class QwenASRCallback(OmniRealtimeCallback):
     
     def on_error(self, error):
         """识别错误"""
-        logging.error(f"Qwen-ASR识别错误: {error}")
+        try:
+            if isinstance(error, dict):
+                error_msg = error.get('message', '未知错误')
+                error_code = error.get('code', 'unknown')
+                logging.error(f"Qwen-ASR识别错误 [{error_code}]: {error_msg}")
+            else:
+                logging.error(f"Qwen-ASR识别错误: {error}")
+        except Exception as e:
+            logging.error(f"Qwen-ASR错误处理失败: {e}")
 
 
 class SpeechRecognitionService:
@@ -101,10 +114,7 @@ class SpeechRecognitionService:
         dashscope.api_key = config.api_key
         
         # 根据区域配置WebSocket URL
-        if config.region == "cn-beijing":
-            dashscope.base_websocket_api_url = 'wss://dashscope.aliyuncs.com/api-ws/v1/inference'
-        else:  # 新加坡或其他区域
-            dashscope.base_websocket_api_url = 'wss://dashscope-intl.aliyuncs.com/api-ws/v1/inference'
+        dashscope.base_websocket_api_url = config.fun_asr_url
     
     def _map_audio_format(self, format: SpeechAudioFormat) -> str:
         """映射音频格式到DashScope格式"""
@@ -143,108 +153,15 @@ class SpeechRecognitionService:
         }
         return language_map.get(language, "zh")
     
-    async def sync_recognition(self, audio_data: bytes, 
-                             model_type: ASRModelType = None,
-                             language: LanguageCode = None,
-                             sample_rate: int = None) -> Dict[str, Any]:
-        """同步语音识别"""
-        try:
-            model_type = model_type or self.config.model_type
-            language = language or self.config.transcription_params.language
-            sample_rate = sample_rate or self.config.transcription_params.sample_rate
-            
-            if model_type == ASRModelType.FUN_ASR_REALTIME:
-                return await self._fun_asr_sync_recognition(audio_data, language, sample_rate)
-            elif model_type == ASRModelType.QWEN_ASR_REALTIME:
-                return await self._qwen_asr_sync_recognition(audio_data, language, sample_rate)
-            else:
-                raise ASRServiceError(f"不支持的模型类型: {model_type}")
-                
-        except Exception as e:
-            self.logger.error(f"同步语音识别失败: {e}")
-            raise ASRServiceError(f"语音识别失败: {str(e)}")
+
     
-    async def _fun_asr_sync_recognition(self, audio_data: bytes, 
-                                      language: LanguageCode, sample_rate: int) -> Dict[str, Any]:
-        """Fun-ASR同步识别"""
-        # 将音频数据保存为临时文件
-        import tempfile
-        import os
-        
-        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_file:
-            # 这里需要将音频数据转换为WAV格式
-            # 简化实现，实际应该使用音频处理库
-            temp_file.write(audio_data)
-            temp_file_path = temp_file.name
-        
-        try:
-            recognition = Recognition(
-                model='fun-asr-realtime',
-                format='wav',
-                sample_rate=sample_rate
-            )
-            
-            result = recognition.call(temp_file_path)
-            
-            if result.status_code == 200:
-                return {
-                    "text": result.get_sentence(),
-                    "confidence": 0.95,  # Fun-ASR不直接提供置信度
-                    "is_final": True,
-                    "model_type": ASRModelType.FUN_ASR_REALTIME,
-                    "language": language
-                }
-            else:
-                raise ASRServiceError(f"Fun-ASR识别失败: {result.message}")
-                
-        finally:
-            # 清理临时文件
-            if os.path.exists(temp_file_path):
-                os.unlink(temp_file_path)
+
     
-    async def _qwen_asr_sync_recognition(self, audio_data: bytes, 
-                                       language: LanguageCode, sample_rate: int) -> Dict[str, Any]:
-        """Qwen-ASR同步识别"""
-        # Qwen-ASR主要通过实时接口实现，这里使用实时接口模拟同步识别
-        # 实际项目中应该使用专门的同步接口
-        
-        result_text = ""
-        is_completed = False
-        
-        def on_transcription(text: str, is_final: bool):
-            nonlocal result_text, is_completed
-            result_text = text
-            if is_final:
-                is_completed = True
-        
-        # 创建实时会话
-        session_id = f"sync_{int(time.time())}"
-        await self.start_realtime_session(session_id, model_type=ASRModelType.QWEN_ASR_REALTIME, 
-                                        on_transcription=on_transcription)
-        
-        # 发送音频数据
-        await self.send_audio_data(session_id, audio_data, is_final=True)
-        
-        # 等待识别完成
-        max_wait_time = 10  # 最大等待10秒
-        start_time = time.time()
-        while not is_completed and (time.time() - start_time) < max_wait_time:
-            await asyncio.sleep(0.1)
-        
-        # 关闭会话
-        await self.stop_realtime_session(session_id)
-        
-        return {
-            "text": result_text,
-            "confidence": 0.95,
-            "is_final": True,
-            "model_type": ASRModelType.QWEN_ASR_REALTIME,
-            "language": language
-        }
+
     
     async def start_realtime_session(self, session_id: str, 
                                    model_type: ASRModelType = None,
-                                   on_transcription: Callable[[str, bool], None] = None) -> bool:
+                                   on_transcription: Callable[[str], None] = None) -> bool:
         """启动实时语音识别会话"""
         try:
             model_type = model_type or self.config.model_type
@@ -275,7 +192,7 @@ class SpeechRecognitionService:
             raise ASRServiceError(f"启动实时会话失败: {str(e)}")
     
     async def _start_fun_asr_session(self, session_id: str, 
-                                   on_transcription: Callable[[str, bool], None]) -> Recognition:
+                                   on_transcription: Callable[[str], None]) -> Recognition:
         """启动Fun-ASR实时会话"""
         callback = FunASRCallback(on_transcription)
         
@@ -291,32 +208,45 @@ class SpeechRecognitionService:
         return recognition
     
     async def _start_qwen_asr_session(self, session_id: str, 
-                                    on_transcription: Callable[[str, bool], None]) -> OmniRealtimeConversation:
+                                    on_transcription: Callable[[str], None]) -> OmniRealtimeConversation:
         """启动Qwen-ASR实时会话"""
         callback = QwenASRCallback(on_transcription)
         
         conversation = OmniRealtimeConversation(
-            model='qwen-audio-turbo',
+            model='qwen3-asr-flash-realtime',
             callback=callback
         )
         
         # 连接并配置会话
         conversation.connect()
         
+        # 根据配置获取音频格式
+        audio_format_map = {
+            SpeechAudioFormat.PCM: AudioFormat.PCM_16000HZ_MONO_16BIT,
+            SpeechAudioFormat.OPUS: AudioFormat.OPUS_16000HZ_MONO
+        }
+        audio_format = audio_format_map.get(
+            self.config.transcription_params.input_audio_format,
+            AudioFormat.PCM_16000HZ_MONO_16BIT
+        )
+        
         # 更新会话配置
+        vad_threshold = max(-1.0, min(1.0, self.config.vad_config.threshold))
+        vad_silence_duration = max(200, min(6000, self.config.vad_config.silence_duration_ms))
+        
         conversation.update_session(
             output_modalities=[MultiModality.TEXT],
             enable_turn_detection=self.config.vad_config.enabled,
-            turn_detection_type=self.config.vad_config.type,
-            turn_detection_threshold=self.config.vad_config.threshold,
-            turn_detection_silence_duration_ms=self.config.vad_config.silence_duration_ms,
-            input_audio_format=AudioFormat.PCM_16000HZ_MONO_16BIT,
+            turn_detection_type='server_vad',  # 固定为server_vad
+            turn_detection_threshold=vad_threshold,
+            turn_detection_silence_duration_ms=vad_silence_duration,
+            input_audio_format=audio_format,
             enable_input_audio_transcription=True
         )
         
         return conversation
     
-    async def send_audio_data(self, session_id: str, audio_data: bytes, is_final: bool = False) -> bool:
+    async def send_audio_data(self, session_id: str, audio_data: bytes) -> bool:
         """发送音频数据到实时会话"""
         try:
             if session_id not in self.active_sessions:
@@ -327,9 +257,9 @@ class SpeechRecognitionService:
             model_type = session_info["model_type"]
             
             if model_type == ASRModelType.FUN_ASR_REALTIME:
-                return await self._send_fun_asr_audio(session_info["session"], audio_data, is_final)
+                return await self._send_fun_asr_audio(session_info["session"], audio_data)
             elif model_type == ASRModelType.QWEN_ASR_REALTIME:
-                return await self._send_qwen_asr_audio(session_info["session"], audio_data, is_final)
+                return await self._send_qwen_asr_audio(session_info["session"], audio_data)
             else:
                 return False
                 
@@ -337,31 +267,33 @@ class SpeechRecognitionService:
             self.logger.error(f"发送音频数据失败: {e}")
             return False
     
-    async def _send_fun_asr_audio(self, recognition: Recognition, audio_data: bytes, is_final: bool) -> bool:
+    async def _send_fun_asr_audio(self, recognition: Recognition, audio_data: bytes) -> bool:
         """发送音频数据到Fun-ASR - 直接使用二进制数据"""
         try:
             # Fun-ASR通过send_audio_frame方法发送二进制音频数据
             recognition.send_audio_frame(audio_data)
-            if is_final:
-                recognition.stop()
             return True
         except Exception as e:
             self.logger.error(f"Fun-ASR发送音频失败: {e}")
             return False
 
     async def _send_qwen_asr_audio(self, conversation: OmniRealtimeConversation, 
-                                 audio_data: bytes, is_final: bool) -> bool:
+                                 audio_data: bytes) -> bool:
         """发送音频数据到Qwen-ASR - 将二进制转为base64传输"""
         try:
-            # 将二进制音频数据转换为base64
-            audio_base64 = base64.b64encode(audio_data).decode('utf-8')
+            # 处理大音频数据分片发送
+            max_chunk_size = 1024 * 1024  # 1MB分片
+            chunks = [audio_data[i:i+max_chunk_size] for i in range(0, len(audio_data), max_chunk_size)]
             
-            # 追加音频数据
-            conversation.append_audio(audio_base64)
-            
-            if is_final:
-                # 提交音频数据
-                conversation.commit()
+            for chunk in chunks:
+                # 将二进制音频数据转换为base64
+                audio_base64 = base64.b64encode(chunk).decode('utf-8')
+                
+                # 追加音频数据
+                conversation.append_audio(audio_base64)
+                
+                # 小延迟避免发送过快
+                await asyncio.sleep(0.01)
             
             return True
         except Exception as e:

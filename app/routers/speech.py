@@ -1,19 +1,17 @@
 """语音识别路由 - 兼容fun-asr-realtime和Qwen-ASR-Realtime模型"""
-import base64
 import json
 import logging
-from typing import Dict, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status, WebSocket, WebSocketDisconnect, Body
-from fastapi.responses import JSONResponse
 
 from ..auth import get_current_active_user
 from ..schemas.speech import (
-    ASRModelType, SpeechRecognitionRequest, SpeechRecognitionResponse,
-    RealtimeTranscriptionRequest, AudioChunkData, RealtimeTranscriptionResponse,
-    ASRConfig, VADConfig, TranscriptionParams, SpeechServiceConfig
+    ASRModelType, 
+    RealtimeTranscriptionRequest, RealtimeTranscriptionResponse,
+    ASRConfig, VADConfig, TranscriptionParams
 )
 from ..services.speech_service import SpeechRecognitionService, ASRServiceError
+from ..config import settings
 
 router = APIRouter(prefix="/api/speech", tags=["speech"])
 
@@ -25,18 +23,12 @@ def get_speech_service() -> SpeechRecognitionService:
     """获取语音识别服务实例"""
     global _speech_service
     if _speech_service is None:
-        # 从环境变量获取配置
-        import os
-        api_key = os.getenv('DASHSCOPE_API_KEY')
-        if not api_key:
-            raise RuntimeError("未配置DASHSCOPE_API_KEY环境变量")
-        
         config = ASRConfig(
-            api_key=api_key,
-            model_type=ASRModelType.FUN_ASR_REALTIME,
-            region=os.getenv('ASR_REGION', 'cn-beijing'),
+            api_key=settings.dashscope_api_key,
+            model_type=settings.dashscope_speech_model,
+            fun_asr_url=settings.fun_asr_url,
             vad_config=VADConfig(
-                enabled=True,
+                enabled=settings.vad_enabled,
                 threshold=0.2,
                 silence_duration_ms=800
             ),
@@ -83,11 +75,10 @@ async def websocket_realtime_speech(
         model_type = service.config.model_type
         
         # 定义转录回调函数
-        async def on_transcription(text: str, is_final: bool):
+        async def on_transcription(text: str):
             response = RealtimeTranscriptionResponse(
                 session_id=session_id,
                 text=text,
-                is_final=is_final,
                 model_type=model_type
             )
             await websocket.send_text(response.json())
@@ -114,18 +105,13 @@ async def websocket_realtime_speech(
                 # 发送音频数据到识别服务
                 success = await service.send_audio_data(
                     session_id=session_id,
-                    audio_data=data,
-                    is_final=False  # 实时流中通常不是最终数据块
+                    audio_data=data
                 )
                 
                 if not success:
                     await websocket.send_text(json.dumps({
                         "error": "发送音频数据失败"
                     }))
-                
-                # 如果是最终数据块，准备结束会话
-                if audio_chunk.is_final:
-                    break
                     
             except WebSocketDisconnect:
                 break
@@ -184,7 +170,6 @@ async def start_realtime_session(
 async def send_audio_data(
     session_id: str,
     audio_data: bytes = Body(..., media_type="application/octet-stream"),
-    is_final: bool = Body(default=False),
     current_user = Depends(get_current_active_user)
 ):
     """发送音频数据到实时会话"""
@@ -194,8 +179,7 @@ async def send_audio_data(
         # 发送音频数据
         success = await service.send_audio_data(
             session_id=session_id,
-            audio_data=audio_data,
-            is_final=is_final
+            audio_data=audio_data
         )
         
         if success:

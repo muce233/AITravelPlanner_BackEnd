@@ -63,7 +63,7 @@ class ASRConfig(BaseModel):
     """语音识别服务配置"""
     model_type: ASRModelType = Field(default=ASRModelType.FUN_ASR_REALTIME, description="模型类型")
     api_key: str = Field(description="阿里云API Key")
-    region: str = Field(default="cn-beijing", description="服务区域")
+    fun_asr_url: str = Field(default="wss://dashscope.aliyuncs.com/api-ws/v1/inference", description="Fun-ASR接口地址")
     vad_config: VADConfig = Field(default_factory=VADConfig, description="VAD配置")
     transcription_params: TranscriptionParams = Field(default_factory=TranscriptionParams, description="识别参数")
     max_duration: int = Field(default=60, ge=1, le=300, description="最大录音时长（秒）")
@@ -82,7 +82,6 @@ class SpeechRecognitionResponse(BaseModel):
     """语音识别响应"""
     text: str = Field(description="识别文本")
     confidence: Optional[float] = Field(default=None, description="置信度")
-    is_final: bool = Field(default=True, description="是否为最终结果")
     model_type: ASRModelType = Field(description="使用的模型类型")
     language: LanguageCode = Field(description="识别语言")
 
@@ -99,7 +98,6 @@ class AudioChunkData(BaseModel):
     """音频数据块"""
     session_id: str = Field(description="会话ID")
     audio_data: str = Field(description="base64编码的音频数据")
-    is_final: bool = Field(default=False, description="是否为最终数据块")
     timestamp: int = Field(description="时间戳")
 
 
@@ -107,7 +105,6 @@ class RealtimeTranscriptionResponse(BaseModel):
     """实时语音识别响应"""
     session_id: str = Field(description="会话ID")
     text: str = Field(description="识别文本")
-    is_final: bool = Field(default=False, description="是否为最终结果")
     confidence: Optional[float] = Field(default=None, description="置信度")
     model_type: ASRModelType = Field(description="使用的模型类型")
 
