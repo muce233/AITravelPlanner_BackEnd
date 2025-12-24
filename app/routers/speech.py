@@ -2,15 +2,13 @@
 import json
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, status, WebSocket, WebSocketDisconnect, Body
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from ..auth import get_current_active_user
 from ..schemas.speech import (
-    ASRModelType, 
-    RealtimeTranscriptionRequest, RealtimeTranscriptionResponse,
+    RealtimeTranscriptionResponse,
     ASRConfig, VADConfig, TranscriptionParams
 )
-from ..services.speech_service import SpeechRecognitionService, ASRServiceError
+from ..services.speech_service import SpeechRecognitionService
 from ..config import settings
 
 router = APIRouter(prefix="/api/speech", tags=["speech"])
@@ -43,21 +41,6 @@ def get_speech_service() -> SpeechRecognitionService:
         _speech_service = SpeechRecognitionService(config)
     
     return _speech_service
-
-
-@router.get("/config")
-async def get_speech_config():
-    """获取语音识别服务配置"""
-    service = get_speech_service()
-    
-    return {
-        "enabled_models": [ASRModelType.FUN_ASR_REALTIME, ASRModelType.QWEN_ASR_REALTIME],
-        "default_model": ASRModelType.FUN_ASR_REALTIME,
-        "max_duration": service.config.max_duration,
-        "sample_rate": service.config.transcription_params.sample_rate,
-        "supported_languages": [lang.value for lang in service.config.transcription_params.language.__class__],
-        "supported_formats": [fmt.value for fmt in service.config.transcription_params.input_audio_format.__class__]
-    }
 
 
 @router.websocket("/realtime/{session_id}")
@@ -133,141 +116,3 @@ async def websocket_realtime_speech(
             await service.stop_realtime_session(session_id)
         except Exception as e:
             logging.error(f"清理会话失败: {e}")
-
-
-@router.post("/realtime/start")
-async def start_realtime_session(
-    request: RealtimeTranscriptionRequest,
-    current_user = Depends(get_current_active_user)
-):
-    """启动实时语音识别会话"""
-    try:
-        service = get_speech_service()
-        
-        # 检查会话是否已存在
-        session_info = await service.get_session_info(request.session_id)
-        if session_info:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="会话已存在")
-        
-        # 启动会话（这里需要传入回调函数，但HTTP接口无法实时返回结果）
-        # 实时识别主要通过WebSocket接口实现
-        success = await service.start_realtime_session(
-            session_id=request.session_id,
-            model_type=service.config.model_type
-        )
-        
-        if success:
-            return {"message": "会话启动成功", "session_id": request.session_id}
-        else:
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="会话启动失败")
-            
-    except ASRServiceError as e:
-        logging.error(f"启动实时会话失败: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
-
-
-@router.post("/realtime/{session_id}/audio")
-async def send_audio_data(
-    session_id: str,
-    audio_data: bytes = Body(..., media_type="application/octet-stream"),
-    current_user = Depends(get_current_active_user)
-):
-    """发送音频数据到实时会话"""
-    try:
-        service = get_speech_service()
-        
-        # 发送音频数据
-        success = await service.send_audio_data(
-            session_id=session_id,
-            audio_data=audio_data
-        )
-        
-        if success:
-            return {"message": "音频数据发送成功"}
-        else:
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="音频数据发送失败")
-            
-    except ASRServiceError as e:
-        logging.error(f"发送音频数据失败: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
-
-
-@router.post("/realtime/{session_id}/stop")
-async def stop_realtime_session(
-    session_id: str,
-    current_user = Depends(get_current_active_user)
-):
-    """停止实时语音识别会话"""
-    try:
-        service = get_speech_service()
-        
-        success = await service.stop_realtime_session(session_id)
-        
-        if success:
-            return {"message": "会话停止成功"}
-        else:
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="会话停止失败")
-            
-    except ASRServiceError as e:
-        logging.error(f"停止实时会话失败: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
-
-
-@router.get("/realtime/{session_id}/info")
-async def get_realtime_session_info(
-    session_id: str,
-    current_user = Depends(get_current_active_user)
-):
-    """获取实时会话信息"""
-    try:
-        service = get_speech_service()
-        
-        session_info = await service.get_session_info(session_id)
-        
-        if session_info:
-            return session_info
-        else:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="会话不存在")
-            
-    except ASRServiceError as e:
-        logging.error(f"获取会话信息失败: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
-
-
-@router.get("/status")
-async def get_speech_service_status():
-    """获取语音识别服务状态"""
-    try:
-        service = get_speech_service()
-        
-        # 清理过期会话
-        expired_count = await service.cleanup_expired_sessions()
-        
-        return {
-            "active_sessions": service.get_active_session_count(),
-            "expired_sessions_cleaned": expired_count,
-            "service_status": "running"
-        }
-        
-    except Exception as e:
-        logging.error(f"获取服务状态失败: {e}")
-        return {
-            "active_sessions": 0,
-            "expired_sessions_cleaned": 0,
-            "service_status": "error",
-            "error": str(e)
-        }
-
-
-@router.post("/synthesize")
-async def speech_synthesize(
-    text: str,
-    current_user = Depends(get_current_active_user)
-):
-    """语音合成（暂为占位实现）"""
-    # TODO: 集成语音合成服务
-    return {
-        "message": "语音合成功能待实现",
-        "text": text,
-        "audio_url": None
-    }

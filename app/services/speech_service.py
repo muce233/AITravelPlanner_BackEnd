@@ -326,16 +326,6 @@ class SpeechRecognitionService:
             self.logger.error(f"停止实时会话失败: {e}")
             return False
     
-    async def get_session_info(self, session_id: str) -> Optional[Dict[str, Any]]:
-        """获取会话信息"""
-        if session_id in self.active_sessions:
-            session_info = self.active_sessions[session_id].copy()
-            # 移除回调函数等敏感信息
-            session_info.pop("on_transcription", None)
-            session_info.pop("session", None)
-            return session_info
-        return None
-    
     async def cleanup_expired_sessions(self) -> int:
         """清理过期会话"""
         current_time = time.time()
