@@ -35,16 +35,18 @@ class FunASRCallback(RecognitionCallback):
     
     def __init__(self, on_transcription: Callable[[str], None]):
         self.on_transcription = on_transcription
-        self.last_text = ""
+        self.loop = asyncio.get_event_loop()
     
-    def on_event(self, message):
+    def on_event(self, result):
         """处理识别事件"""
         try:
-            if hasattr(message, 'sentence'):
-                text = message.sentence
-                if text and text != self.last_text:
-                    self.on_transcription(text)
-                    self.last_text = text
+            sentence = result.get_sentence()
+            if 'text' in sentence:
+                logging.info('Fun-ASR实时识别回调 text: ', sentence['text'])
+                if asyncio.iscoroutinefunction(self.on_transcription):
+                    self.loop.create_task(self.on_transcription(sentence['text']))
+                else:
+                    self.on_transcription(sentence['text'])
         except Exception as e:
             logging.error(f"Fun-ASR回调处理错误: {e}")
     
@@ -62,7 +64,7 @@ class QwenASRCallback(OmniRealtimeCallback):
     
     def __init__(self, on_transcription: Callable[[str], None]):
         self.on_transcription = on_transcription
-        self.last_text = ""
+        self.loop = asyncio.get_event_loop()
     
     def on_event(self, event):
         """处理识别事件"""
@@ -70,9 +72,11 @@ class QwenASRCallback(OmniRealtimeCallback):
             # 处理语音识别结果事件
             if event.get('type') == 'conversation.item.input_audio_transcription.text':
                 text = event.get('text', '')
-                if text and text != self.last_text:
+                logging.info('Qwen-ASR实时识别回调 text: ', text)
+                if asyncio.iscoroutinefunction(self.on_transcription):
+                    self.loop.create_task(self.on_transcription(text))
+                else:
                     self.on_transcription(text)
-                    self.last_text = text
             # 处理语音停止事件
             elif event.get('type') == 'input_audio_buffer.speech_stopped':
                 # 可以在这里处理语音结束后的逻辑
