@@ -23,7 +23,8 @@ class Settings(BaseSettings):
     
     # 阿里百炼语音识别配置
     dashscope_api_key: Optional[str] = None
-    dashscope_speech_model: str = "fun-asr-realtime"
+    #dashscope_speech_model: str = "fun-asr-realtime"
+    dashscope_speech_model: str = "qwen-asr-realtime"
     fun_asr_url: str = "wss://dashscope.aliyuncs.com/api-ws/v1/inference"
     vad_enabled: bool = True
     

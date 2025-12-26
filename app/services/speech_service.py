@@ -4,18 +4,18 @@ import base64
 import json
 import logging
 import time
-from typing import Optional, Dict, Any, Callable
+from typing import Dict, Any, Callable
 from enum import Enum
 
 import dashscope
 from dashscope.audio.asr import Recognition, RecognitionCallback
 from dashscope.audio.qwen_omni import OmniRealtimeConversation, OmniRealtimeCallback
-from dashscope.audio.qwen_omni import MultiModality, AudioFormat
+from dashscope.audio.qwen_omni import MultiModality
+from dashscope.audio.qwen_omni.omni_realtime import TranscriptionParams
 
 from ..schemas.speech import (
     ASRModelType, AudioFormat as SpeechAudioFormat, LanguageCode, 
-    VADConfig, TranscriptionParams, ASRConfig, RealtimeTranscriptionResponse,
-    AudioChunkData
+    ASRConfig
 )
 
 
@@ -226,17 +226,25 @@ class SpeechRecognitionService:
         
         # 根据配置获取音频格式
         audio_format_map = {
-            SpeechAudioFormat.PCM: AudioFormat.PCM_16000HZ_MONO_16BIT,
-            SpeechAudioFormat.OPUS: AudioFormat.OPUS_16000HZ_MONO
+            SpeechAudioFormat.PCM: "pcm",
+            SpeechAudioFormat.OPUS: "opus"
         }
         audio_format = audio_format_map.get(
             self.config.transcription_params.input_audio_format,
-            AudioFormat.PCM_16000HZ_MONO_16BIT
+            "pcm"
         )
         
         # 更新会话配置
         vad_threshold = max(-1.0, min(1.0, self.config.vad_config.threshold))
         vad_silence_duration = max(200, min(6000, self.config.vad_config.silence_duration_ms))
+        
+        # 创建转录参数
+        transcription_params = TranscriptionParams(
+            language=self._map_language_code(self.config.transcription_params.language),
+            sample_rate=self.config.transcription_params.sample_rate,
+            input_audio_format=audio_format,
+            corpus_text=self.config.transcription_params.corpus_text
+        )
         
         conversation.update_session(
             output_modalities=[MultiModality.TEXT],
@@ -244,8 +252,8 @@ class SpeechRecognitionService:
             turn_detection_type='server_vad',  # 固定为server_vad
             turn_detection_threshold=vad_threshold,
             turn_detection_silence_duration_ms=vad_silence_duration,
-            input_audio_format=audio_format,
-            enable_input_audio_transcription=True
+            enable_input_audio_transcription=True,
+            transcription_params=transcription_params
         )
         
         return conversation
