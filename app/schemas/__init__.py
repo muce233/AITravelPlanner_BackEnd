@@ -11,6 +11,7 @@ from .chat import (
     MessageRole, ChatMessage, ChatRequest, 
     ChatChoice, UsageInfo, ChatResponse, StreamChatResponse
 )
+from .prompt import PromptTemplate, PromptTemplateType
 
 # 导出所有模型
 __all__ = [
@@ -32,5 +33,7 @@ __all__ = [
     "MapSearchRequest", "MapDirectionsRequest",
     # DeepSeek相关
     "DeepSeekModel", "MessageRole", "ChatMessage", "ChatRequest",
-    "ChatChoice", "UsageInfo", "ChatResponse", "StreamChatResponse"
+    "ChatChoice", "UsageInfo", "ChatResponse", "StreamChatResponse",
+    # 提示词相关
+    "PromptTemplate", "PromptTemplateType"
 ]
