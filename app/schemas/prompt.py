@@ -4,7 +4,8 @@ from enum import StrEnum
 
 class PromptTemplateType(StrEnum):
     """提示词模板类型枚举"""
-    新增行程
+    系统提示词 = "系统提示词"
+    新增行程 = "新增行程"
 
 
 class PromptTemplate(BaseModel):

@@ -50,14 +50,23 @@ class ChatClient:
     
     async def chat_completion_stream(
         self,
-        messages: list[chat.ChatMessage]
+        messages: list[chat.ChatMessage],
+        tools: Optional[list[dict]] = None
     ) -> AsyncGenerator[str, None]:
-        """流式聊天补全接口"""
+        """流式聊天补全接口
+        
+        Args:
+            messages: 消息列表
+            tools: 工具定义列表，用于Function Calling
+        
+        Yields:
+            StreamChatResponse: 流式响应块
+        """
         await self._initialize_client()
         
         request_data = chat.ChatRequest(
             messages=messages
-        ).dict(exclude_none=True)
+        ).model_dump(exclude_none=True)
         
         # 添加后端固定的参数
         request_data.update({
@@ -67,10 +76,21 @@ class ChatClient:
             "stream": True
         })
         
+        # 如果提供了工具定义，添加到请求中
+        if tools:
+            request_data["tools"] = tools
+        
+        print(f"DEBUG: 发送给DeepSeek API的完整请求:")
+        print(f"DEBUG: URL: {self.base_url}/chat/completions")
+        print(f"DEBUG: Request Data: {json.dumps(request_data, ensure_ascii=False, indent=2)}")
+        
         try:
             async with self._client.stream(
                 "POST", "/chat/completions", json=request_data
             ) as response:
+                print(f"DEBUG: API响应状态码: {response.status_code}")
+                print(f"DEBUG: API响应头: {dict(response.headers)}")
+                
                 response.raise_for_status()
                 
                 async for line in response.aiter_lines():
@@ -101,6 +121,8 @@ class ChatClient:
     async def _handle_api_error(self, error: HTTPStatusError):
         """处理API错误"""
         try:
+            error_text = await error.response.aread()
+            print(f"DEBUG: API错误响应内容: {error_text.decode('utf-8', errors='ignore')}")
             error_data = error.response.json()
             error_message = error_data.get("error", {}).get("message", str(error))
         except:

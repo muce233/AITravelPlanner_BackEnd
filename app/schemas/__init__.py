@@ -12,6 +12,7 @@ from .chat import (
     ChatChoice, UsageInfo, ChatResponse, StreamChatResponse
 )
 from .prompt import PromptTemplate, PromptTemplateType
+from .ai_tool import ToolDefinition, ToolCall, CreateTripTool, ToolCallResult, ToolMessage
 
 # 导出所有模型
 __all__ = [
@@ -35,5 +36,7 @@ __all__ = [
     "DeepSeekModel", "MessageRole", "ChatMessage", "ChatRequest",
     "ChatChoice", "UsageInfo", "ChatResponse", "StreamChatResponse",
     # 提示词相关
-    "PromptTemplate", "PromptTemplateType"
+    "PromptTemplate", "PromptTemplateType",
+    # 工具调用相关
+    "ToolDefinition", "ToolCall", "CreateTripTool", "ToolCallResult", "ToolMessage"
 ]
