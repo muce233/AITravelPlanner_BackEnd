@@ -13,6 +13,7 @@ from ..services.chat_client import chat_service
 from ..services.conversation_service import ConversationService, APILogService
 from ..services.ai_tool_service import AiToolService
 from ..services.prompt_service import prompt_service
+from ..services.log_utils import get_logger
 from ..schemas import chat
 from ..schemas.prompt import PromptTemplateType
 from ..middleware.rate_limit import user_rate_limiter
@@ -47,6 +48,12 @@ async def create_chat_completion_stream(
     api_log_service = APILogService(db)
     tool_service = AiToolService(db)
     
+    # 获取对话日志记录器
+    conversation_logger = get_logger(
+        log_dir=settings.conversation_log_dir,
+        enabled=settings.enable_conversation_log
+    )
+    
     try:
         # 创建或获取对话
         conversation = await conversation_service.get_or_create_conversation(
@@ -63,6 +70,13 @@ async def create_chat_completion_stream(
             name=request.messages[-1].name if request.messages and hasattr(request.messages[-1], 'name') else None
         )
         
+        # 记录用户消息完整内容
+        user_content = request.messages[-1].content if request.messages else ""
+        conversation_logger.log(
+            conversation_id=str(conversation.id),
+            content=f"用户消息 - 内容: \n{user_content}"
+        )
+        
         # 获取系统提示词模板
         system_prompt = prompt_service.get_template(PromptTemplateType.系统提示词)
         system_content = system_prompt.template_content if system_prompt else ""
@@ -73,36 +87,18 @@ async def create_chat_completion_stream(
             messages.append(chat.ChatMessage(role=chat.MessageRole.SYSTEM, content=system_content))
         messages.extend(request.messages)
         
-        # 打印初始消息列表
-        print("=" * 80)
-        print("DEBUG: 初始消息列表构建完成")
-        print(f"DEBUG: 消息总数: {len(messages)}")
-        for i, msg in enumerate(messages):
-            print(f"DEBUG: 消息{i+1}: role={msg.role}, content={msg.content[:50] if msg.content else 'None'}..., name={msg.name}, tool_call_id={msg.tool_call_id}")
-        print("=" * 80)
+        # 记录对话开始日志
+        conversation_logger.log(
+            conversation_id=str(conversation.id),
+            content=f"对话开始 - 用户ID: {current_user.id}, 模型: {settings.chat_model}, 消息数量: {len(messages)}"
+        )
         
         # 获取工具定义
         tools = AiToolService.get_tool_definitions()
-        print(f"DEBUG: 工具定义数量: {len(tools)}")
-        print("=" * 80)
         
         async def generate():
             full_content = ""
             tool_calls_buffer = {}
-            
-            # 调试信息收集
-            debug_info = {
-                "first_ai_call": {
-                    "chunks_received": 0,
-                    "content_length": 0,
-                    "tool_calls_detected": False
-                },
-                "second_ai_call": {
-                    "chunks_received": 0,
-                    "content_length": 0
-                },
-                "tool_calls_executed": []
-            }
             
             try:
                 # 第一次调用AI
@@ -110,8 +106,6 @@ async def create_chat_completion_stream(
                     messages=messages,
                     tools=tools
                 ):
-                    debug_info["first_ai_call"]["chunks_received"] += 1
-                    
                     if chunk.choices and len(chunk.choices) > 0:
                         delta_dict = chunk.choices[0].delta
                         
@@ -122,7 +116,6 @@ async def create_chat_completion_stream(
                         # 处理文本内容
                         if content:
                             full_content += content
-                            debug_info["first_ai_call"]["content_length"] += len(content)
                             yield f"data: {json.dumps({
                                 'id': chunk.id,
                                 'object': chunk.object,
@@ -137,7 +130,6 @@ async def create_chat_completion_stream(
                         
                         # 处理工具调用（增量式）
                         if tool_calls and isinstance(tool_calls, list):
-                            debug_info["first_ai_call"]["tool_calls_detected"] = True
                             for tool_call in tool_calls:
                                 if not isinstance(tool_call, dict):
                                     continue
@@ -170,8 +162,13 @@ async def create_chat_completion_stream(
                     # 发送心跳保持连接
                     yield "data: {}\n\n"
                 
-                # 打印第一次AI调用的汇总信息
-                print(f"DEBUG: 第一次AI调用完成 - 接收chunk数量: {debug_info['first_ai_call']['chunks_received']}, 内容长度: {debug_info['first_ai_call']['content_length']}, 检测到工具调用: {debug_info['first_ai_call']['tool_calls_detected']}")
+                
+                # 记录普通响应完整内容
+                if full_content:
+                    conversation_logger.log(
+                        conversation_id=str(conversation.id),
+                        content=f"普通响应完整内容: \n{full_content}"
+                    )
                 
                 # 检查是否有工具调用
                 if tool_calls_buffer:
@@ -194,17 +191,23 @@ async def create_chat_completion_stream(
                             user_id=current_user.id
                         )
                         
-                        debug_info["tool_calls_executed"].append({
-                            'tool_name': tool_name,
-                            'arguments_length': len(arguments),
-                            'result_type': type(result).__name__
-                        })
-                        
                         tool_results.append({
                             'tool_call_id': tool_call_id,
                             'result': result,
                             'tool_name': tool_name
                         })
+                        
+                        # 记录工具调用完整信息
+                        conversation_logger.log(
+                            conversation_id=str(conversation.id),
+                            content=f"工具调用: - 工具名称: {tool_name}, 工具ID: {tool_call_id}, 完整参数: \n{arguments}"
+                        )
+                        
+                        # 记录工具调用结果
+                        conversation_logger.log(
+                            conversation_id=str(conversation.id),
+                            content=f"工具调用结果: - 工具名称: {tool_name}, 结果: \n{json.dumps(result.dict(), ensure_ascii=False)}"
+                        )
                         
                         # 保存工具调用消息到对话
                         await conversation_service.add_message(
@@ -224,17 +227,6 @@ async def create_chat_completion_stream(
                             name=tool_name
                         )
                     
-                    # 打印工具调用汇总信息
-                    print(f"DEBUG: 工具调用执行完成 - 执行数量: {len(debug_info['tool_calls_executed'])}")
-                    for i, tool_call_info in enumerate(debug_info['tool_calls_executed']):
-                        print(f"DEBUG:   工具{i+1}: {tool_call_info['tool_name']}, 参数长度: {tool_call_info['arguments_length']}, 结果类型: {tool_call_info['result_type']}")
-                    
-                    # 打印添加工具调用结果前的消息列表
-                    print("=" * 80)
-                    print("DEBUG: 准备添加工具调用结果到消息历史")
-                    print(f"DEBUG: 当前消息数量: {len(messages)}")
-                    print("=" * 80)
-                    
                     # 根据阿里云Function Calling规范，消息序列必须是：
                     # user -> assistant(包含tool_calls) -> tool(包含tool_call_id)
                     # 所以需要先添加包含tool_calls的assistant消息，再添加tool消息
@@ -249,7 +241,6 @@ async def create_chat_completion_stream(
                         tool_calls=tool_calls_list
                     )
                     messages.append(assistant_tool_calls_message)
-                    print(f"DEBUG: 添加assistant工具调用消息 - role={assistant_tool_calls_message.role}, tool_calls数量={len(tool_calls_list)}")
                     
                     # 2. 将工具调用结果添加到消息历史
                     for tool_result in tool_results:
@@ -259,15 +250,6 @@ async def create_chat_completion_stream(
                             tool_call_id=tool_result['tool_call_id']
                         )
                         messages.append(tool_message)
-                        print(f"DEBUG: 添加工具响应消息 - role={tool_message.role}, tool_call_id={tool_message.tool_call_id}, content长度={len(tool_message.content)}")
-                    
-                    # 打印添加工具调用结果后的消息列表
-                    print("=" * 80)
-                    print("DEBUG: 工具调用结果添加完成")
-                    print(f"DEBUG: 更新后消息数量: {len(messages)}")
-                    for i, msg in enumerate(messages):
-                        print(f"DEBUG: 消息{i+1}: role={msg.role}, content={msg.content[:50] if msg.content else 'None'}..., name={msg.name}, tool_call_id={msg.tool_call_id}")
-                    print("=" * 80)
                     
                     # 再次调用AI，获取最终回复
                     assistant_response_content = ""
@@ -275,8 +257,6 @@ async def create_chat_completion_stream(
                         messages=messages,
                         tools=tools
                     ):
-                        debug_info["second_ai_call"]["chunks_received"] += 1
-                        
                         if chunk.choices and chunk.choices[0].delta:
                             delta_dict = chunk.choices[0].delta
                             content = delta_dict.get('content', '') or ""
@@ -284,7 +264,6 @@ async def create_chat_completion_stream(
                             if content:
                                 assistant_response_content += content
                                 full_content += content
-                                debug_info["second_ai_call"]["content_length"] += len(content)
                                 yield f"data: {json.dumps({
                                     'id': chunk.id,
                                     'object': chunk.object,
@@ -299,8 +278,12 @@ async def create_chat_completion_stream(
                         
                         yield "data: {}\n\n"
                     
-                    # 打印第二次AI调用的汇总信息
-                    print(f"DEBUG: 第二次AI调用完成 - 接收chunk数量: {debug_info['second_ai_call']['chunks_received']}, 内容长度: {debug_info['second_ai_call']['content_length']}")
+                    # 记录工具调用后响应完整内容
+                    if assistant_response_content:
+                        conversation_logger.log(
+                            conversation_id=str(conversation.id),
+                            content=f"工具调用后响应完整内容: \n{assistant_response_content}"
+                        )
                     
                     # 保存AI最终回复到对话
                     if assistant_response_content:
@@ -322,8 +305,12 @@ async def create_chat_completion_stream(
                             name="assistant"
                         )
                 
-                # 打印整体汇总信息
-                print(f"DEBUG: 对话处理完成 - 总内容长度: {len(full_content)}, 是否使用工具: {len(debug_info['tool_calls_executed']) > 0}")
+                # 记录对话结束日志
+                response_time = int((time.time() - start_time) * 1000)
+                conversation_logger.log(
+                    conversation_id=str(conversation.id),
+                    content=f"对话结束 - 总耗时: {response_time}ms, 总内容长度: {len(full_content)}"
+                )
                 
                 # 记录API日志
                 response_time = int((time.time() - start_time) * 1000)
@@ -339,6 +326,12 @@ async def create_chat_completion_stream(
                 yield "data: [DONE]\n\n"
                 
             except Exception as e:
+                # 记录错误日志
+                conversation_logger.log(
+                    conversation_id=str(conversation.id),
+                    content=f"错误 - 错误类型: {type(e).__name__}, 错误信息: {str(e)}"
+                )
+                
                 # 记录错误日志
                 response_time = int((time.time() - start_time) * 1000)
                 await api_log_service.create_log(
@@ -366,6 +359,12 @@ async def create_chat_completion_stream(
         )
         
     except Exception as e:
+        # 记录错误日志
+        conversation_logger.log(
+            conversation_id=str(conversation.id) if 'conversation' in locals() else "unknown",
+            content=f"错误 - 错误类型: {type(e).__name__}, 错误信息: {str(e)}"
+        )
+        
         # 记录错误日志
         response_time = int((time.time() - start_time) * 1000)
         await api_log_service.create_log(

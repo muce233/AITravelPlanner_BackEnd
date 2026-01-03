@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     allowed_hosts: List[str] = ["localhost", "127.0.0.1"]
     cors_origins: List[str] = ["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:5173"]
     
+    # 对话日志配置
+    enable_conversation_log: bool = True
+    conversation_log_dir: str = "logs"
+    
     class Config:
         env_file = ".env"
         case_sensitive = False
