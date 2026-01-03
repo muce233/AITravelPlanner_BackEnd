@@ -15,8 +15,10 @@ class MessageRole(str, Enum):
 class ChatMessage(BaseModel):
     """聊天消息模型"""
     role: MessageRole = Field(..., description="消息角色")
-    content: str = Field(..., description="消息内容")
+    content: Optional[str] = Field(None, description="消息内容")
     name: Optional[str] = Field(None, description="消息发送者名称")
+    tool_call_id: Optional[str] = Field(None, description="工具调用ID，用于tool角色的消息")
+    tool_calls: Optional[List[Dict[str, Any]]] = Field(None, description="工具调用列表，用于assistant角色的消息")
 
 
 class ChatRequest(BaseModel):

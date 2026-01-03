@@ -67,28 +67,42 @@ async def create_chat_completion_stream(
         system_prompt = prompt_service.get_template(PromptTemplateType.系统提示词)
         system_content = system_prompt.template_content if system_prompt else ""
         
-        print(f"DEBUG: 系统提示词内容:")
-        print(f"DEBUG: {system_content}")
-        
         # 构建消息列表，添加系统提示词
         messages = []
         if system_content:
             messages.append(chat.ChatMessage(role=chat.MessageRole.SYSTEM, content=system_content))
         messages.extend(request.messages)
         
-        print(f"DEBUG: 发送给AI的消息列表:")
+        # 打印初始消息列表
+        print("=" * 80)
+        print("DEBUG: 初始消息列表构建完成")
+        print(f"DEBUG: 消息总数: {len(messages)}")
         for i, msg in enumerate(messages):
-            print(f"DEBUG: 消息{i}: role={msg.role}, content={msg.content[:100] if msg.content else ''}")
+            print(f"DEBUG: 消息{i+1}: role={msg.role}, content={msg.content[:50] if msg.content else 'None'}..., name={msg.name}, tool_call_id={msg.tool_call_id}")
+        print("=" * 80)
         
         # 获取工具定义
         tools = AiToolService.get_tool_definitions()
-        
-        print(f"DEBUG: 工具定义:")
-        print(f"DEBUG: {json.dumps(tools, ensure_ascii=False, indent=2)}")
+        print(f"DEBUG: 工具定义数量: {len(tools)}")
+        print("=" * 80)
         
         async def generate():
             full_content = ""
             tool_calls_buffer = {}
+            
+            # 调试信息收集
+            debug_info = {
+                "first_ai_call": {
+                    "chunks_received": 0,
+                    "content_length": 0,
+                    "tool_calls_detected": False
+                },
+                "second_ai_call": {
+                    "chunks_received": 0,
+                    "content_length": 0
+                },
+                "tool_calls_executed": []
+            }
             
             try:
                 # 第一次调用AI
@@ -96,27 +110,19 @@ async def create_chat_completion_stream(
                     messages=messages,
                     tools=tools
                 ):
-                    print(f"DEBUG: chunk类型: {type(chunk)}")
-                    print(f"DEBUG: chunk: {chunk}")
+                    debug_info["first_ai_call"]["chunks_received"] += 1
                     
                     if chunk.choices and len(chunk.choices) > 0:
-                        print(f"DEBUG: chunk.choices[0]: {chunk.choices[0]}")
-                        print(f"DEBUG: chunk.choices[0].delta: {chunk.choices[0].delta}")
-                        print(f"DEBUG: chunk.choices[0].delta类型: {type(chunk.choices[0].delta)}")
-                        
                         delta_dict = chunk.choices[0].delta
                         
                         if isinstance(delta_dict, dict):
                             content = delta_dict.get('content', '') or ""
                             tool_calls = delta_dict.get('tool_calls', None)
-                            
-                            print(f"DEBUG: content: {content}")
-                            print(f"DEBUG: tool_calls: {tool_calls}")
-                            print(f"DEBUG: tool_calls类型: {type(tool_calls)}")
                         
                         # 处理文本内容
                         if content:
                             full_content += content
+                            debug_info["first_ai_call"]["content_length"] += len(content)
                             yield f"data: {json.dumps({
                                 'id': chunk.id,
                                 'object': chunk.object,
@@ -131,19 +137,18 @@ async def create_chat_completion_stream(
                         
                         # 处理工具调用（增量式）
                         if tool_calls and isinstance(tool_calls, list):
-                            print(f"DEBUG: 收到工具调用: {tool_calls}")
+                            debug_info["first_ai_call"]["tool_calls_detected"] = True
                             for tool_call in tool_calls:
                                 if not isinstance(tool_call, dict):
-                                    print(f"DEBUG: tool_call 不是字典类型: {type(tool_call)}")
                                     continue
                                 
                                 index = tool_call.get('index')
                                 if index is None:
-                                    print(f"DEBUG: tool_call 缺少 index 字段")
                                     continue
                                 
                                 if index not in tool_calls_buffer:
                                     tool_calls_buffer[index] = {
+                                        'type': 'function',
                                         'id': tool_call.get('id', ''),
                                         'function': {
                                             'name': tool_call.get('function', {}).get('name', '') if isinstance(tool_call.get('function'), dict) else '',
@@ -161,13 +166,12 @@ async def create_chat_completion_stream(
                                             existing['function']['name'] = tool_call['function']['name']
                                         if 'arguments' in tool_call['function'] and tool_call['function']['arguments']:
                                             existing['function']['arguments'] += tool_call['function']['arguments']
-                                
-                                print(f"DEBUG: 累积后的 tool_calls_buffer[{index}]: {tool_calls_buffer[index]}")
                     
                     # 发送心跳保持连接
                     yield "data: {}\n\n"
                 
-                print(f"DEBUG: 最终 tool_calls_buffer: {tool_calls_buffer}")
+                # 打印第一次AI调用的汇总信息
+                print(f"DEBUG: 第一次AI调用完成 - 接收chunk数量: {debug_info['first_ai_call']['chunks_received']}, 内容长度: {debug_info['first_ai_call']['content_length']}, 检测到工具调用: {debug_info['first_ai_call']['tool_calls_detected']}")
                 
                 # 检查是否有工具调用
                 if tool_calls_buffer:
@@ -179,10 +183,7 @@ async def create_chat_completion_stream(
                         tool_name = function.get('name', '')
                         arguments = function.get('arguments', '')
                         
-                        print(f"DEBUG: 执行工具调用 - tool_call_id: {tool_call_id}, tool_name: {tool_name}, arguments: {arguments}")
-                        
                         if not tool_name:
-                            print(f"DEBUG: 警告 - tool_name 为空")
                             continue
                         
                         # 执行工具
@@ -192,6 +193,12 @@ async def create_chat_completion_stream(
                             arguments=arguments,
                             user_id=current_user.id
                         )
+                        
+                        debug_info["tool_calls_executed"].append({
+                            'tool_name': tool_name,
+                            'arguments_length': len(arguments),
+                            'result_type': type(result).__name__
+                        })
                         
                         tool_results.append({
                             'tool_call_id': tool_call_id,
@@ -217,13 +224,50 @@ async def create_chat_completion_stream(
                             name=tool_name
                         )
                     
-                    # 将工具调用结果添加到消息历史
+                    # 打印工具调用汇总信息
+                    print(f"DEBUG: 工具调用执行完成 - 执行数量: {len(debug_info['tool_calls_executed'])}")
+                    for i, tool_call_info in enumerate(debug_info['tool_calls_executed']):
+                        print(f"DEBUG:   工具{i+1}: {tool_call_info['tool_name']}, 参数长度: {tool_call_info['arguments_length']}, 结果类型: {tool_call_info['result_type']}")
+                    
+                    # 打印添加工具调用结果前的消息列表
+                    print("=" * 80)
+                    print("DEBUG: 准备添加工具调用结果到消息历史")
+                    print(f"DEBUG: 当前消息数量: {len(messages)}")
+                    print("=" * 80)
+                    
+                    # 根据阿里云Function Calling规范，消息序列必须是：
+                    # user -> assistant(包含tool_calls) -> tool(包含tool_call_id)
+                    # 所以需要先添加包含tool_calls的assistant消息，再添加tool消息
+                    
+                    # 1. 将tool_calls_buffer转换为列表格式
+                    tool_calls_list = list(tool_calls_buffer.values())
+                    
+                    # 2. 添加包含tool_calls的assistant消息
+                    assistant_tool_calls_message = chat.ChatMessage(
+                        role=chat.MessageRole.ASSISTANT,
+                        content="",
+                        tool_calls=tool_calls_list
+                    )
+                    messages.append(assistant_tool_calls_message)
+                    print(f"DEBUG: 添加assistant工具调用消息 - role={assistant_tool_calls_message.role}, tool_calls数量={len(tool_calls_list)}")
+                    
+                    # 2. 将工具调用结果添加到消息历史
                     for tool_result in tool_results:
-                        messages.append(chat.ChatMessage(
+                        tool_message = chat.ChatMessage(
                             role=chat.MessageRole.TOOL,
                             content=json.dumps(tool_result['result'].dict()),
-                            name=tool_result['tool_name']
-                        ))
+                            tool_call_id=tool_result['tool_call_id']
+                        )
+                        messages.append(tool_message)
+                        print(f"DEBUG: 添加工具响应消息 - role={tool_message.role}, tool_call_id={tool_message.tool_call_id}, content长度={len(tool_message.content)}")
+                    
+                    # 打印添加工具调用结果后的消息列表
+                    print("=" * 80)
+                    print("DEBUG: 工具调用结果添加完成")
+                    print(f"DEBUG: 更新后消息数量: {len(messages)}")
+                    for i, msg in enumerate(messages):
+                        print(f"DEBUG: 消息{i+1}: role={msg.role}, content={msg.content[:50] if msg.content else 'None'}..., name={msg.name}, tool_call_id={msg.tool_call_id}")
+                    print("=" * 80)
                     
                     # 再次调用AI，获取最终回复
                     assistant_response_content = ""
@@ -231,6 +275,8 @@ async def create_chat_completion_stream(
                         messages=messages,
                         tools=tools
                     ):
+                        debug_info["second_ai_call"]["chunks_received"] += 1
+                        
                         if chunk.choices and chunk.choices[0].delta:
                             delta_dict = chunk.choices[0].delta
                             content = delta_dict.get('content', '') or ""
@@ -238,6 +284,7 @@ async def create_chat_completion_stream(
                             if content:
                                 assistant_response_content += content
                                 full_content += content
+                                debug_info["second_ai_call"]["content_length"] += len(content)
                                 yield f"data: {json.dumps({
                                     'id': chunk.id,
                                     'object': chunk.object,
@@ -251,6 +298,9 @@ async def create_chat_completion_stream(
                                 })}\n\n"
                         
                         yield "data: {}\n\n"
+                    
+                    # 打印第二次AI调用的汇总信息
+                    print(f"DEBUG: 第二次AI调用完成 - 接收chunk数量: {debug_info['second_ai_call']['chunks_received']}, 内容长度: {debug_info['second_ai_call']['content_length']}")
                     
                     # 保存AI最终回复到对话
                     if assistant_response_content:
@@ -272,12 +322,15 @@ async def create_chat_completion_stream(
                             name="assistant"
                         )
                 
+                # 打印整体汇总信息
+                print(f"DEBUG: 对话处理完成 - 总内容长度: {len(full_content)}, 是否使用工具: {len(debug_info['tool_calls_executed']) > 0}")
+                
                 # 记录API日志
                 response_time = int((time.time() - start_time) * 1000)
                 await api_log_service.create_log(
                     user_id=current_user.id,
                     endpoint="chat/completions/stream",
-                    model=request.model,
+                    model=settings.chat_model,
                     response_time=response_time,
                     status_code=200
                 )
@@ -291,7 +344,7 @@ async def create_chat_completion_stream(
                 await api_log_service.create_log(
                     user_id=current_user.id,
                     endpoint="chat/completions/stream",
-                    model=request.model,
+                    model=settings.chat_model,
                     response_time=response_time,
                     status_code=500,
                     error_message=str(e)
@@ -318,7 +371,7 @@ async def create_chat_completion_stream(
         await api_log_service.create_log(
             user_id=current_user.id,
             endpoint="chat/completions/stream",
-            model=request.model if 'request' in locals() else None,
+            model=settings.chat_model,
             response_time=response_time,
             status_code=500,
             error_message=str(e)
