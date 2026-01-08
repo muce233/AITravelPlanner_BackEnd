@@ -14,9 +14,11 @@ class MessageRole(str, Enum):
 
 class ChatMessage(BaseModel):
     """聊天消息模型"""
+    id: Optional[str] = Field(None, description="消息ID")
     role: MessageRole = Field(..., description="消息角色")
     content: Optional[str] = Field(None, description="消息内容")
     name: Optional[str] = Field(None, description="消息发送者名称")
+    message_type: Optional[str] = Field("normal", description="消息类型: normal, tool_call_status, tool_result")
     tool_call_id: Optional[str] = Field(None, description="工具调用ID，用于tool角色的消息")
     tool_calls: Optional[List[Dict[str, Any]]] = Field(None, description="工具调用列表，用于assistant角色的消息")
 
@@ -129,3 +131,32 @@ class ConversationListResponse(BaseModel):
     total: int = Field(..., description="总对话数")
     page: int = Field(..., description="当前页码")
     page_size: int = Field(..., description="每页大小")
+
+
+class MessageCreateEvent(BaseModel):
+    """创建新消息事件"""
+    type: Literal["message_create"] = Field(default="message_create", description="事件类型")
+    message_id: str = Field(..., description="消息ID")
+    created_at: str = Field(..., description="创建时间")
+
+
+class MessageChunkEvent(BaseModel):
+    """消息内容块事件"""
+    type: Literal["message_chunk"] = Field(default="message_chunk", description="事件类型")
+    message_id: str = Field(..., description="消息ID")
+    index: int = Field(..., description="内容块索引")
+    content: str = Field(..., description="内容片段")
+
+
+class ToolCallEvent(BaseModel):
+    """工具调用事件"""
+    type: Literal["tool_call"] = Field(default="tool_call", description="事件类型")
+    status: Literal["calling"] = Field(default="calling", description="调用状态")
+    content: str = Field(..., description="工具调用状态文本")
+
+
+class ToolResultEvent(BaseModel):
+    """工具调用结果事件"""
+    type: Literal["tool_result"] = Field(default="tool_result", description="事件类型")
+    status: Literal["success", "failed"] = Field(..., description="执行结果状态")
+    content: str = Field(..., description="工具调用结果文本")

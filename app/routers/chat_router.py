@@ -1,6 +1,8 @@
 """聊天API路由"""
 import time
 import json
+import uuid
+from datetime import datetime
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.responses import StreamingResponse
@@ -99,8 +101,28 @@ async def create_chat_completion_stream(
         async def generate():
             full_content = ""
             tool_calls_buffer = {}
+            message_id = str(uuid.uuid4())
+            chunk_index = 0
             
             try:
+                # 第一次AI调用：创建assistant消息到数据库
+                await conversation_service.add_message(
+                    conversation_id=conversation.id,
+                    user_id=current_user.id,
+                    role="assistant",
+                    content="",
+                    name="assistant",
+                    message_type="normal",
+                    message_id=message_id
+                )
+                
+                # 发送message_create事件，表示AI开始回复
+                yield f"data: {json.dumps({
+                    'type': 'message_create',
+                    'message_id': message_id,
+                    'created_at': datetime.now().isoformat()
+                })}\n\n"
+                
                 # 第一次调用AI
                 async for chunk in chat_service.chat_completion_stream(
                     messages=messages,
@@ -116,16 +138,13 @@ async def create_chat_completion_stream(
                         # 处理文本内容
                         if content:
                             full_content += content
+                            chunk_index += 1
+                            # 发送message_chunk事件
                             yield f"data: {json.dumps({
-                                'id': chunk.id,
-                                'object': chunk.object,
-                                'created': chunk.created,
-                                'model': chunk.model,
-                                'choices': [{
-                                    'index': chunk.choices[0].index,
-                                    'delta': delta_dict,
-                                    'finish_reason': chunk.choices[0].finish_reason
-                                }]
+                                'type': 'message_chunk',
+                                'message_id': message_id,
+                                'index': chunk_index,
+                                'content': content
                             })}\n\n"
                         
                         # 处理工具调用（增量式）
@@ -162,6 +181,13 @@ async def create_chat_completion_stream(
                     # 发送心跳保持连接
                     yield "data: {}\n\n"
                 
+                # 第一次AI调用结束：更新message的content
+                if full_content:
+                    await conversation_service.update_message_content(
+                        conversation_id=conversation.id,
+                        message_id=message_id,
+                        content=full_content
+                    )
                 
                 # 记录普通响应完整内容
                 if full_content:
@@ -183,6 +209,13 @@ async def create_chat_completion_stream(
                         if not tool_name:
                             continue
                         
+                        # 发送tool_call事件，表示AI正在调用工具
+                        yield f"data: {json.dumps({
+                            'type': 'tool_call',
+                            'status': 'calling',
+                            'content': f'正在调用工具: {tool_name}'
+                        })}\n\n"
+                        
                         # 执行工具
                         result = await tool_service.execute_tool_call(
                             tool_call_id=tool_call_id,
@@ -196,6 +229,13 @@ async def create_chat_completion_stream(
                             'result': result,
                             'tool_name': tool_name
                         })
+                        
+                        # 发送tool_result事件，表示工具调用完成
+                        yield f"data: {json.dumps({
+                            'type': 'tool_result',
+                            'status': 'success',
+                            'content': f'工具 {tool_name} 调用完成'
+                        })}\n\n"
                         
                         # 记录工具调用完整信息
                         conversation_logger.log(
@@ -215,7 +255,9 @@ async def create_chat_completion_stream(
                             user_id=current_user.id,
                             role="assistant",
                             content=json.dumps({"tool_calls": [tool_call]}),
-                            name="assistant"
+                            name="assistant",
+                            message_type="tool_call_status",
+                            tool_json=tool_call
                         )
                         
                         # 保存工具结果消息到对话
@@ -224,7 +266,9 @@ async def create_chat_completion_stream(
                             user_id=current_user.id,
                             role="tool",
                             content=json.dumps(result.dict()),
-                            name=tool_name
+                            name=tool_name,
+                            message_type="tool_result",
+                            tool_json={"tool_name": tool_name, "result": result.dict()}
                         )
                     
                     # 根据阿里云Function Calling规范，消息序列必须是：
@@ -251,6 +295,25 @@ async def create_chat_completion_stream(
                         )
                         messages.append(tool_message)
                     
+                    # 第二次AI调用：创建新的assistant消息到数据库
+                    second_message_id = str(uuid.uuid4())
+                    await conversation_service.add_message(
+                        conversation_id=conversation.id,
+                        user_id=current_user.id,
+                        role="assistant",
+                        content="",
+                        name="assistant",
+                        message_type="normal",
+                        message_id=second_message_id
+                    )
+                    
+                    # 发送message_create事件，表示第二次AI开始回复
+                    yield f"data: {json.dumps({
+                        'type': 'message_create',
+                        'message_id': second_message_id,
+                        'created_at': datetime.now().isoformat()
+                    })}\n\n"
+                    
                     # 再次调用AI，获取最终回复
                     assistant_response_content = ""
                     async for chunk in chat_service.chat_completion_stream(
@@ -264,35 +327,30 @@ async def create_chat_completion_stream(
                             if content:
                                 assistant_response_content += content
                                 full_content += content
+                                chunk_index += 1
+                                # 发送message_chunk事件
                                 yield f"data: {json.dumps({
-                                    'id': chunk.id,
-                                    'object': chunk.object,
-                                    'created': chunk.created,
-                                    'model': chunk.model,
-                                    'choices': [{
-                                        'index': chunk.choices[0].index,
-                                        'delta': delta_dict,
-                                        'finish_reason': chunk.choices[0].finish_reason
-                                    }]
+                                    'type': 'message_chunk',
+                                    'message_id': second_message_id,
+                                    'index': chunk_index,
+                                    'content': content
                                 })}\n\n"
                         
                         yield "data: {}\n\n"
+                    
+                    # 第二次AI调用结束：更新message的content
+                    if assistant_response_content:
+                        await conversation_service.update_message_content(
+                            conversation_id=conversation.id,
+                            message_id=second_message_id,
+                            content=assistant_response_content
+                        )
                     
                     # 记录工具调用后响应完整内容
                     if assistant_response_content:
                         conversation_logger.log(
                             conversation_id=str(conversation.id),
                             content=f"工具调用后响应完整内容: \n{assistant_response_content}"
-                        )
-                    
-                    # 保存AI最终回复到对话
-                    if assistant_response_content:
-                        await conversation_service.add_message(
-                            conversation_id=conversation.id,
-                            user_id=current_user.id,
-                            role="assistant",
-                            content=assistant_response_content,
-                            name="assistant"
                         )
                 else:
                     # 没有工具调用，直接保存AI回复

@@ -70,9 +70,11 @@ class ConversationService:
         # 转换为ChatMessage格式
         chat_messages = [
             ChatMessage(
+                id=msg.id,
                 role=MessageRole(msg.role),
                 content=msg.content,
-                name=msg.name
+                name=msg.name,
+                message_type=msg.message_type or "normal"
             ) for msg in messages
         ]
         
@@ -226,11 +228,30 @@ class ConversationService:
         role: str, 
         content: str, 
         name: Optional[str] = None,
-        tokens: Optional[int] = None
+        tokens: Optional[int] = None,
+        message_type: str = "normal",
+        tool_json: Optional[Dict[str, Any]] = None,
+        message_id: Optional[str] = None
     ) -> Optional[ConversationModel]:
-        """向对话添加消息（使用conversation_messages表）"""
+        """向对话添加消息（使用conversation_messages表）
+        
+        Args:
+            conversation_id: 对话ID
+            user_id: 用户ID
+            role: 消息角色（user, assistant, tool, system）
+            content: 消息内容
+            name: 消息发送者名称
+            tokens: token数量
+            message_type: 消息类型（normal, tool_call_status, tool_result）
+            tool_json: 工具调用JSON数据
+            message_id: 消息ID（如果不提供，则自动生成）
+        
+        Returns:
+            更新后的对话对象，失败返回None
+        """
         # 验证参数
-        if not content or not content.strip():
+        # user 消息必须有内容，assistant 消息可以为空（用于流式传输）
+        if role == "user" and (not content or not content.strip()):
             return None
             
         conversation = await self.get_conversation(conversation_id, user_id)
@@ -238,17 +259,21 @@ class ConversationService:
             return None
         
         try:
-            # 创建新的消息记录
+            # 创建新的消息记录，使用传入的message_id或自动生成
             message = ConversationMessage(
+                id=message_id or str(uuid.uuid4()),
                 conversation_id=conversation_id,
                 role=role,
                 content=content.strip(),
                 name=name,
-                tokens=tokens or 0
+                tokens=tokens or 0,
+                message_type=message_type,
+                tool_json=tool_json
             )
             
             # 验证消息数据
-            if not message.role or not message.content:
+            # user 消息必须有内容，assistant 消息可以为空（用于流式传输）
+            if not message.role or (role == "user" and not message.content):
                 return None
             
             # 保存消息到数据库
@@ -279,6 +304,42 @@ class ConversationService:
             await self.db.rollback()
             print(f"添加消息失败: {str(e)}")
             return None
+    
+    async def update_message_content(
+        self,
+        conversation_id: str,
+        message_id: str,
+        content: str
+    ) -> bool:
+        """更新消息内容"""
+        try:
+            # 查找消息
+            stmt = select(ConversationMessage).where(
+                ConversationMessage.id == message_id,
+                ConversationMessage.conversation_id == conversation_id
+            )
+            result = await self.db.execute(stmt)
+            message = result.scalar_one_or_none()
+            
+            if not message:
+                return False
+            
+            # 更新消息内容
+            message.content = content
+            
+            # 更新对话的更新时间
+            conversation = await self.get_conversation(conversation_id, 0)
+            if conversation:
+                conversation.updated_at = datetime.now()
+            
+            await self.db.commit()
+            
+            return True
+            
+        except Exception as e:
+            await self.db.rollback()
+            print(f"更新消息内容失败: {str(e)}")
+            return False
     
 
     

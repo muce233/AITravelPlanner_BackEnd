@@ -23,12 +23,14 @@ class ConversationMessage(Base):
     """对话消息表（可选，用于更详细的消息管理）"""
     __tablename__ = "conversation_messages"
     
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(String(36), primary_key=True, index=True)
     conversation_id = Column(String(36), ForeignKey("conversations.id"), nullable=False)
     role = Column(String(20), nullable=False)  # user, assistant, system
     content = Column(Text, nullable=False)
     name = Column(String(100))  # 消息发送者名称
     tokens = Column(Integer, default=0)  # token数量
+    tool_json = Column(JSON)  # 工具调用JSON数据
+    message_type = Column(String(50), default="normal")  # 消息类型: normal, tool_call_status, tool_result
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
