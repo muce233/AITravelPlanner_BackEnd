@@ -385,6 +385,46 @@ class ConversationService:
             await self.db.rollback()
             print(f"清空对话消息失败: {str(e)}")
             return None
+    
+    async def get_conversation_messages(self, conversation_id: str, user_id: int) -> Optional[List[ChatMessage]]:
+        """直接获取对话的消息列表（从conversation_messages表）
+        
+        Args:
+            conversation_id: 对话ID
+            user_id: 用户ID
+        
+        Returns:
+            消息列表，如果对话不存在或无权限则返回None
+        """
+        # 验证对话是否属于该用户
+        conversation = await self.get_conversation(conversation_id, user_id)
+        if not conversation:
+            return None
+        
+        try:
+            # 获取对话的消息列表
+            stmt = select(ConversationMessage).where(
+                ConversationMessage.conversation_id == conversation_id
+            ).order_by(ConversationMessage.created_at)
+            result = await self.db.execute(stmt)
+            messages = result.scalars().all()
+            
+            # 转换为ChatMessage格式
+            chat_messages = [
+                ChatMessage(
+                    id=msg.id,
+                    role=MessageRole(msg.role),
+                    content=msg.content,
+                    name=msg.name,
+                    message_type=msg.message_type or "normal"
+                ) for msg in messages
+            ]
+            
+            return chat_messages
+            
+        except Exception as e:
+            print(f"获取对话消息失败: {str(e)}")
+            return None
 
 
 class APILogService:

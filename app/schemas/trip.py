@@ -30,6 +30,7 @@ class Trip(TripBase):
     id: UUID
     user_id: int
     actual_expense: float
+    conversation_id: str
     created_at: datetime
     updated_at: Optional[datetime] = None
     

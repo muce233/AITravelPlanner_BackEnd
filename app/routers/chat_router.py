@@ -3,7 +3,7 @@ import time
 import json
 import uuid
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -352,16 +352,6 @@ async def create_chat_completion_stream(
                             conversation_id=str(conversation.id),
                             content=f"工具调用后响应完整内容: \n{assistant_response_content}"
                         )
-                else:
-                    # 没有工具调用，直接保存AI回复
-                    if full_content:
-                        await conversation_service.add_message(
-                            conversation_id=conversation.id,
-                            user_id=current_user.id,
-                            role="assistant",
-                            content=full_content,
-                            name="assistant"
-                        )
                 
                 # 记录对话结束日志
                 response_time = int((time.time() - start_time) * 1000)
@@ -524,6 +514,36 @@ async def get_conversation(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"获取对话失败: {str(e)}"
+        )
+
+
+@router.get("/conversations/{conversation_id}/messages", response_model=List[chat.ChatMessage])
+async def get_conversation_messages(
+    conversation_id: str,
+    current_user: UserModel = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """直接获取对话的消息列表（从conversation_messages表）"""
+    try:
+        conversation_service = ConversationService(db)
+        messages = await conversation_service.get_conversation_messages(
+            conversation_id=conversation_id,
+            user_id=current_user.id
+        )
+        
+        if messages is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="对话不存在或无权限"
+            )
+        
+        return messages
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"获取对话消息失败: {str(e)}"
         )
 
 
