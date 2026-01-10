@@ -1,5 +1,6 @@
 """费用相关数据库模型"""
 from sqlalchemy import Column, Integer, String, DateTime, Float, JSON, ForeignKey
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 from ..database import Base
 
@@ -9,7 +10,7 @@ class Expense(Base):
     __tablename__ = "expenses"
     
     id = Column(Integer, primary_key=True, index=True)
-    trip_id = Column(Integer, ForeignKey("trips.id"), nullable=False)
+    trip_id = Column(UUID(as_uuid=True), ForeignKey("trips.id"), nullable=False)
     category = Column(String(50), nullable=False)  # 餐饮/交通/住宿/购物/其他
     amount = Column(Float, nullable=False)
     currency = Column(String(10), default="CNY")

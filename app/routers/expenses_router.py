@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from typing import List
+from uuid import UUID
 
 from ..database import get_db
 from ..auth import get_current_active_user
@@ -13,7 +14,7 @@ router = APIRouter(prefix="/api/trips/{trip_id}/expenses", tags=["expenses"])
 
 @router.post("/", response_model=Expense)
 async def create_expense(
-    trip_id: int,
+    trip_id: UUID,
     expense: ExpenseCreate,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
@@ -59,7 +60,7 @@ async def create_expense(
 
 @router.get("/", response_model=List[Expense])
 async def get_trip_expenses(
-    trip_id: int,
+    trip_id: UUID,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -86,7 +87,7 @@ async def get_trip_expenses(
 
 @router.put("/{expense_id}", response_model=Expense)
 async def update_expense(
-    trip_id: int,
+    trip_id: UUID,
     expense_id: int,
     expense_update: ExpenseUpdate,
     current_user: User = Depends(get_current_active_user),
@@ -140,7 +141,7 @@ async def update_expense(
 
 @router.delete("/{expense_id}")
 async def delete_expense(
-    trip_id: int,
+    trip_id: UUID,
     expense_id: int,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
@@ -189,7 +190,7 @@ async def delete_expense(
 
 @router.get("/budget/analysis")
 async def get_budget_analysis(
-    trip_id: int,
+    trip_id: UUID,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):

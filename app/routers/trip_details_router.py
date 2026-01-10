@@ -2,18 +2,19 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import List
+from uuid import UUID
 
 from ..database import get_db
 from ..auth import get_current_active_user
 from ..models import Trip, TripDetail, User
-from ..schemas.trip_detail import TripDetail, TripDetailCreate, TripDetailUpdate
+from ..schemas.trip_detail import TripDetail as TripDetailSchema, TripDetailCreate, TripDetailUpdate
 
 router = APIRouter(prefix="/api/trips/{trip_id}/details", tags=["trip_details"])
 
 
-@router.post("/", response_model=TripDetail)
+@router.post("/", response_model=TripDetailSchema)
 async def create_trip_detail(
-    trip_id: int,
+    trip_id: UUID,
     detail: TripDetailCreate,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
@@ -54,9 +55,9 @@ async def create_trip_detail(
     return db_detail
 
 
-@router.get("/", response_model=List[TripDetail])
+@router.get("/", response_model=List[TripDetailSchema])
 async def get_trip_details(
-    trip_id: int,
+    trip_id: UUID,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -81,10 +82,10 @@ async def get_trip_details(
     return details
 
 
-@router.put("/{detail_id}", response_model=TripDetail)
+@router.put("/{detail_id}", response_model=TripDetailSchema)
 async def update_trip_detail(
-    trip_id: int,
-    detail_id: int,
+    trip_id: UUID,
+    detail_id: UUID,
     detail_update: TripDetailUpdate,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
@@ -129,8 +130,8 @@ async def update_trip_detail(
 
 @router.delete("/{detail_id}")
 async def delete_trip_detail(
-    trip_id: int,
-    detail_id: int,
+    trip_id: UUID,
+    detail_id: UUID,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):

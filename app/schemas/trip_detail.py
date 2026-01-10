@@ -2,6 +2,7 @@
 from pydantic import BaseModel
 from typing import Optional, Dict, List
 from datetime import datetime
+from uuid import UUID
 
 
 class TripDetailBase(BaseModel):
@@ -37,8 +38,8 @@ class TripDetailUpdate(BaseModel):
 
 
 class TripDetail(TripDetailBase):
-    id: int
-    trip_id: int
+    id: UUID
+    trip_id: UUID
     
     class Config:
         from_attributes = True

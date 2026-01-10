@@ -1,6 +1,8 @@
 """行程详情相关数据库模型"""
 from sqlalchemy import Column, Integer, String, DateTime, Float, Text, JSON, ForeignKey
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
+import uuid
 from ..database import Base
 
 
@@ -8,8 +10,8 @@ class TripDetail(Base):
     """行程详情表"""
     __tablename__ = "trip_details"
     
-    id = Column(Integer, primary_key=True, index=True)
-    trip_id = Column(Integer, ForeignKey("trips.id"), nullable=False)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
+    trip_id = Column(UUID(as_uuid=True), ForeignKey("trips.id"), nullable=False)
     day = Column(Integer, nullable=False)  # 第几天
     type = Column(String(50), nullable=False)  # 景点/住宿/餐厅/交通
     name = Column(String(200), nullable=False)

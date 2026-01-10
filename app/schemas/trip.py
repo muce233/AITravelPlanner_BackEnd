@@ -2,14 +2,15 @@
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime
+from uuid import UUID
 
 
 class TripBase(BaseModel):
-    title: str
-    destination: str
-    start_date: datetime
-    end_date: datetime
-    total_budget: float
+    title: Optional[str] = None
+    destination: Optional[str] = None
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
+    total_budget: Optional[float] = None
 
 
 class TripCreate(TripBase):
@@ -26,7 +27,7 @@ class TripUpdate(BaseModel):
 
 
 class Trip(TripBase):
-    id: int
+    id: UUID
     user_id: int
     actual_expense: float
     created_at: datetime

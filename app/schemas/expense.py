@@ -2,6 +2,7 @@
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime
+from uuid import UUID
 
 
 class ExpenseBase(BaseModel):
@@ -28,7 +29,7 @@ class ExpenseUpdate(BaseModel):
 
 class Expense(ExpenseBase):
     id: int
-    trip_id: int
+    trip_id: UUID
     
     class Config:
         from_attributes = True
