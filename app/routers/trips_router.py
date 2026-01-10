@@ -9,6 +9,8 @@ from ..database import get_db
 from ..auth import get_current_active_user
 from ..models import Trip as TripModel, User
 from ..schemas.trip import Trip, TripCreate, TripUpdate
+from ..services.conversation_service import ConversationService
+from ..schemas.chat import CreateConversationRequest
 
 router = APIRouter(prefix="/api/trips", tags=["trips"])
 
@@ -18,7 +20,7 @@ async def create_quick_trip(
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """快速创建空行程，无需传入任何参数"""
+    """快速创建空行程，无需传入任何参数，同时创建关联的对话会话"""
     today = datetime.now().date()
     tomorrow = today + timedelta(days=1)
     
@@ -34,6 +36,16 @@ async def create_quick_trip(
     db.add(db_trip)
     await db.commit()
     await db.refresh(db_trip)
+    
+    # 创建关联的对话会话
+    conversation_service = ConversationService(db)
+    conversation_request = CreateConversationRequest(title=db_trip.title)
+    await conversation_service.create_conversation(
+        user_id=current_user.id,
+        request=conversation_request,
+        trip_id=db_trip.id
+    )
+    
     return db_trip
 
 
@@ -43,7 +55,7 @@ async def create_trip(
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """创建新行程，支持创建空行程"""
+    """创建新行程，支持创建空行程，同时创建关联的对话会话"""
     db_trip = TripModel(
         user_id=current_user.id,
         title=trip.title,
@@ -56,6 +68,16 @@ async def create_trip(
     db.add(db_trip)
     await db.commit()
     await db.refresh(db_trip)
+    
+    # 创建关联的对话会话
+    conversation_service = ConversationService(db)
+    conversation_request = CreateConversationRequest(title=db_trip.title)
+    await conversation_service.create_conversation(
+        user_id=current_user.id,
+        request=conversation_request,
+        trip_id=db_trip.id
+    )
+    
     return db_trip
 
 

@@ -24,15 +24,26 @@ class ConversationService:
     async def create_conversation(
         self, 
         user_id: int, 
-        request: CreateConversationRequest
+        request: CreateConversationRequest,
+        trip_id: Optional[str] = None
     ) -> ConversationModel:
-        """创建新对话"""
+        """创建新对话
+        
+        Args:
+            user_id: 用户ID
+            request: 创建对话请求
+            trip_id: 关联的行程ID（可选，uuid格式）
+        
+        Returns:
+            ConversationModel: 创建的对话模型
+        """
         conversation_id = str(uuid.uuid4())
         
         conversation = ConversationModel(
             id=conversation_id,
             title=request.title,
             user_id=user_id,
+            trip_id=trip_id,
             model=settings.chat_model,
             messages=[],
             is_active=True
@@ -82,6 +93,7 @@ class ConversationService:
             id=conversation.id,
             title=conversation.title,
             user_id=conversation.user_id,
+            trip_id=conversation.trip_id,
             messages=chat_messages,
             created_at=conversation.created_at,
             updated_at=conversation.updated_at,
@@ -138,6 +150,7 @@ class ConversationService:
                 id=conv.id,
                 title=conv.title,
                 user_id=conv.user_id,
+                trip_id=conv.trip_id,
                 created_at=conv.created_at,
                 updated_at=conv.updated_at,
                 model=conv.model,

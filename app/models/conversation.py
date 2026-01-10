@@ -1,7 +1,9 @@
 """对话会话相关数据库模型"""
 from sqlalchemy import Column, Integer, String, DateTime, Text, JSON, Boolean, ForeignKey
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 from datetime import datetime
+import uuid
 from ..database import Base
 
 
@@ -12,6 +14,7 @@ class Conversation(Base):
     id = Column(String(36), primary_key=True, index=True)
     title = Column(String(200), nullable=False)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    trip_id = Column(UUID(as_uuid=True), nullable=True)  # 关联行程ID，一个trips一个conversations，使用uuid类型，无外键约束
     model = Column(String(50), nullable=False, default="chat-model")
     messages = Column(JSON, default=[])  # 存储消息历史
     is_active = Column(Boolean, default=True)

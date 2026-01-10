@@ -8,6 +8,8 @@ import json
 from ..models.trip import Trip
 from ..schemas.ai_tool import CreateTripTool, ToolCallResult
 from ..schemas.trip import Trip as TripSchema
+from .conversation_service import ConversationService
+from ..schemas.chat import CreateConversationRequest
 
 
 class AiToolService:
@@ -36,7 +38,7 @@ class AiToolService:
         """
         执行创建行程工具
         
-        该方法会验证参数、创建Trip记录并保存到数据库。
+        该方法会验证参数、创建Trip记录并保存到数据库，同时创建关联的对话会话。
         
         Args:
             tool_call_id: 工具调用ID
@@ -77,6 +79,15 @@ class AiToolService:
             self.db.add(trip)
             await self.db.commit()
             await self.db.refresh(trip)
+            
+            # 创建关联的对话会话
+            conversation_service = ConversationService(self.db)
+            conversation_request = CreateConversationRequest(title=trip.title)
+            await conversation_service.create_conversation(
+                user_id=user_id,
+                request=conversation_request,
+                trip_id=trip.id
+            )
             
             # 转换为Schema格式
             trip_schema = TripSchema.model_validate(trip)
