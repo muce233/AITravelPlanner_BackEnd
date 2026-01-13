@@ -184,7 +184,8 @@ async def _generate_chat_stream(
                         tool_call_id=tool_call_id,
                         tool_name=tool_name,
                         arguments=arguments,
-                        user_id=current_user.id
+                        user_id=current_user.id,
+                        conversation_id=str(conversation.id)
                     )
                     
                     tool_results.append({

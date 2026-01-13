@@ -32,25 +32,6 @@ class ToolCall(BaseModel):
     function: Dict[str, str] = Field(..., description="函数调用信息，包含name和arguments")
 
 
-class CreateTripTool(BaseModel):
-    """创建行程工具参数模型
-    
-    用于创建行程时提取的参数。
-    
-    Attributes:
-        title: 行程标题，如"北京5日游"
-        destination: 目的地，如"北京"
-        start_date: 出发日期，格式：YYYY-MM-DD
-        end_date: 结束日期，格式：YYYY-MM-DD
-        total_budget: 总预算，单位：元
-    """
-    title: str = Field(..., description="行程标题，如'北京5日游'")
-    destination: str = Field(..., description="目的地，如'北京'")
-    start_date: str = Field(..., description="出发日期，格式：YYYY-MM-DD")
-    end_date: str = Field(..., description="结束日期，格式：YYYY-MM-DD")
-    total_budget: float = Field(..., description="总预算，单位：元")
-
-
 class ToolCallResult(BaseModel):
     """工具调用结果模型
     

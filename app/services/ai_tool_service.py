@@ -2,14 +2,10 @@
 from typing import Dict, Any, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from datetime import datetime
-import json
 
 from ..models.trip import Trip
-from ..schemas.ai_tool import CreateTripTool, ToolCallResult
-from ..schemas.trip import Trip as TripSchema
-from .conversation_service import ConversationService
-from ..schemas.chat import CreateConversationRequest
+from ..models.conversation import Conversation
+from ..schemas.ai_tool import ToolCallResult
 
 
 class AiToolService:
@@ -17,7 +13,7 @@ class AiToolService:
     
     该类负责处理AI发起的工具调用请求，执行相应的操作并返回结果。
     目前支持的工具：
-    - create_trip: 创建旅行行程
+    - read_trip: 读取旅行行程
     """
     
     def __init__(self, db: AsyncSession):
@@ -29,98 +25,96 @@ class AiToolService:
         """
         self.db = db
     
-    async def execute_create_trip(
+    async def execute_read_trip(
         self,
         tool_call_id: str,
-        params: CreateTripTool,
-        user_id: int
+        user_id: int,
+        conversation_id: Optional[str] = None
     ) -> ToolCallResult:
         """
-        执行创建行程工具
+        执行读取行程工具
         
-        该方法会验证参数、创建Trip记录并保存到数据库，同时创建关联的对话会话。
+        该方法会根据对话ID读取关联的Trip记录并返回详细信息。
         
         Args:
             tool_call_id: 工具调用ID
-            params: 创建行程工具参数
+            params: 读取行程工具参数（不需要参数）
             user_id: 用户ID
+            conversation_id: 对话ID（用于获取对话关联的行程）
         
         Returns:
             ToolCallResult: 工具调用结果，包含成功状态、行程数据或错误信息
-        
-        Raises:
-            ValueError: 当日期格式不正确或日期逻辑错误时抛出
         """
         try:
-            # 验证日期格式
-            start_date = self._parse_date(params.start_date)
-            end_date = self._parse_date(params.end_date)
-            
-            # 验证日期逻辑（出发日期不能晚于结束日期）
-            if start_date > end_date:
+            # 检查是否提供了conversation_id
+            if not conversation_id:
                 return ToolCallResult(
-                    tool_name="create_trip",
+                    tool_name="read_trip",
                     success=False,
-                    error="出发日期不能晚于结束日期"
+                    error="当前对话没有关联的行程，无法读取"
                 )
             
-            # 创建Trip记录
-            trip = Trip(
-                user_id=user_id,
-                title=params.title,
-                destination=params.destination,
-                start_date=start_date,
-                end_date=end_date,
-                total_budget=params.total_budget,
-                actual_expense=0.0
+            # 从对话关联的行程获取trip_id
+            conv_stmt = select(Conversation.trip_id).where(
+                Conversation.id == conversation_id,
+                Conversation.user_id == user_id
             )
+            conv_result = await self.db.execute(conv_stmt)
+            trip_id = conv_result.scalar_one_or_none()
             
-            # 保存到数据库
-            self.db.add(trip)
-            await self.db.commit()
-            await self.db.refresh(trip)
+            # 如果对话没有关联的行程
+            if not trip_id:
+                return ToolCallResult(
+                    tool_name="read_trip",
+                    success=False,
+                    error="当前对话没有关联的行程"
+                )
             
-            # 创建关联的对话会话
-            conversation_service = ConversationService(self.db)
-            conversation_request = CreateConversationRequest(title=trip.title)
-            await conversation_service.create_conversation(
-                user_id=user_id,
-                request=conversation_request,
-                trip_id=trip.id
+            # 根据trip_id查询行程
+            stmt = select(Trip).where(
+                Trip.id == trip_id,
+                Trip.user_id == user_id
             )
+            result = await self.db.execute(stmt)
+            trip = result.scalar_one_or_none()
             
-            # 转换为Schema格式
-            trip_schema = TripSchema.model_validate(trip)
+            # 如果行程不存在
+            if not trip:
+                return ToolCallResult(
+                    tool_name="read_trip",
+                    success=False,
+                    error="行程不存在或无权限访问"
+                )
+            
+            # 查询关联的conversation
+            conv_stmt = select(Conversation.id).where(Conversation.trip_id == trip.id)
+            conv_result = await self.db.execute(conv_stmt)
+            conversation_id_result = conv_result.scalar_one_or_none()
             
             # 返回成功结果
             return ToolCallResult(
-                tool_name="create_trip",
+                tool_name="read_trip",
                 success=True,
                 data={
-                    "trip_id": trip.id,
+                    "trip_id": str(trip.id),
                     "title": trip.title,
                     "destination": trip.destination,
-                    "start_date": trip.start_date.strftime("%Y-%m-%d"),
-                    "end_date": trip.end_date.strftime("%Y-%m-%d"),
-                    "total_budget": trip.total_budget,
-                    "created_at": trip.created_at.isoformat()
+                    "start_date": trip.start_date.strftime("%Y-%m-%d") if trip.start_date else None,
+                    "end_date": trip.end_date.strftime("%Y-%m-%d") if trip.end_date else None,
+                    # "total_budget": trip.total_budget,
+                    # "actual_expense": trip.actual_expense,
+                    "conversation_id": conversation_id_result,
+                    "created_at": trip.created_at.isoformat(),
+                    "updated_at": trip.updated_at.isoformat() if trip.updated_at else None
                 }
             )
             
-        except ValueError as e:
-            # 日期格式错误
-            return ToolCallResult(
-                tool_name="create_trip",
-                success=False,
-                error=f"日期格式错误: {str(e)}"
-            )
         except Exception as e:
             # 其他错误
-            await self.db.rollback()
             return ToolCallResult(
-                tool_name="create_trip",
+                tool_name="read_trip",
                 success=False,
-                error=f"创建行程失败: {str(e)}"
+                error=f"读取行程失败: {str(e)}"
             )
     
     async def execute_tool_call(
@@ -128,7 +122,8 @@ class AiToolService:
         tool_call_id: str,
         tool_name: str,
         arguments: str,
-        user_id: int
+        user_id: int,
+        conversation_id: Optional[str] = None
     ) -> ToolCallResult:
         """
         执行工具调用
@@ -140,19 +135,16 @@ class AiToolService:
             tool_name: 工具名称
             arguments: 工具参数（JSON字符串）
             user_id: 用户ID
+            conversation_id: 对话ID（可选，用于获取对话关联的行程）
         
         Returns:
             ToolCallResult: 工具调用结果
         """
         try:
             # 根据工具名称路由到对应的执行方法
-            if tool_name == "create_trip":
-                # 解析参数
-                params_dict = json.loads(arguments)
-                params = CreateTripTool(**params_dict)
-                
-                # 执行创建行程
-                return await self.execute_create_trip(tool_call_id, params, user_id)
+            if tool_name == "read_trip":
+                # 执行读取行程
+                return await self.execute_read_trip(tool_call_id, user_id, conversation_id)
             else:
                 # 未知工具
                 return ToolCallResult(
@@ -161,12 +153,6 @@ class AiToolService:
                     error=f"未知的工具: {tool_name}"
                 )
                 
-        except json.JSONDecodeError as e:
-            return ToolCallResult(
-                tool_name=tool_name,
-                success=False,
-                error=f"参数解析失败: {str(e)}"
-            )
         except Exception as e:
             return ToolCallResult(
                 tool_name=tool_name,
@@ -188,54 +174,13 @@ class AiToolService:
             {
                 "type": "function",
                 "function": {
-                    "name": "create_trip",
-                    "description": "用于创建新的旅行行程，当用户表达想要规划旅行、去某地旅游等意图时调用",
+                    "name": "read_trip",
+                    "description": "用于读取当前对话关联的旅行行程信息，当用户询问行程的详细信息时调用。该工具会自动使用当前对话关联的行程，不需要用户提供任何参数。",
                     "parameters": {
                         "type": "object",
-                        "properties": {
-                            "title": {
-                                "type": "string",
-                                "description": "行程标题，如'北京5日游'"
-                            },
-                            "destination": {
-                                "type": "string",
-                                "description": "目的地，如'北京'"
-                            },
-                            "start_date": {
-                                "type": "string",
-                                "description": "出发日期，格式：YYYY-MM-DD"
-                            },
-                            "end_date": {
-                                "type": "string",
-                                "description": "结束日期，格式：YYYY-MM-DD"
-                            },
-                            "total_budget": {
-                                "type": "number",
-                                "description": "总预算，单位：元"
-                            }
-                        },
-                        "required": ["title", "destination", "start_date", "end_date", "total_budget"]
+                        "properties": {},
+                        "required": []
                     }
                 }
             }
         ]
-    
-    def _parse_date(self, date_str: str) -> datetime:
-        """
-        解析日期字符串
-        
-        将YYYY-MM-DD格式的字符串转换为datetime对象。
-        
-        Args:
-            date_str: 日期字符串，格式：YYYY-MM-DD
-        
-        Returns:
-            datetime: 解析后的日期时间对象
-        
-        Raises:
-            ValueError: 当日期格式不正确时抛出
-        """
-        try:
-            return datetime.strptime(date_str, "%Y-%m-%d")
-        except ValueError:
-            raise ValueError(f"日期格式不正确，应为YYYY-MM-DD格式，实际为: {date_str}")
