@@ -23,11 +23,262 @@ from ..config import settings
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
+conversation_logger = get_logger(
+    log_dir=settings.conversation_log_dir,
+    enabled=settings.enable_conversation_log
+)
 
 
+async def _generate_chat_stream(
+    conversation,
+    current_user,
+    conversation_service,
+    tool_service,
+    messages,
+    tools
+):
+    """
+    生成聊天流式响应
+    
+    参数:
+        conversation: 对话对象
+        current_user: 当前用户
+        conversation_service: 对话服务
+        tool_service: AI工具服务
+        messages: 消息列表（会被修改）
+        tools: 工具定义
+    """
+    
+    # 循环调用AI，最多10次或无工具调用时退出
+    max_iterations = 10
+    iteration = 0
+    
+    while iteration < max_iterations:
+        iteration += 1
+        
+        try:
+            full_content = ""
+            tool_calls_buffer = {}
+            message_id = str(uuid.uuid4())
+            chunk_index = 0
+            
+            # AI调用：创建assistant消息到数据库
+            await conversation_service.add_message(
+                conversation_id=conversation.id,
+                user_id=current_user.id,
+                role="assistant",
+                content="",
+                name="assistant",
+                message_type="normal",
+                message_id=message_id
+            )
+            
+            # 发送message_create事件，表示AI开始回复
+            yield f"data: {json.dumps({
+                'type': 'message_create',
+                'message_id': message_id,
+                'created_at': datetime.now().isoformat()
+            })}\n\n"
+            
+            # 调用AI的messages列表
+            conversation_logger.log(
+                conversation_id=str(conversation.id),
+                content=f"调用AI的messages列表 (第{iteration}次):\n{json.dumps([msg.dict() if hasattr(msg, 'dict') else msg for msg in messages], ensure_ascii=False, indent=2)}"
+            )
 
-
-
+            # 调用AI
+            async for chunk in chat_service.chat_completion_stream(
+                messages=messages,
+                tools=tools
+            ):
+                if chunk.choices and len(chunk.choices) > 0:
+                    delta_dict = chunk.choices[0].delta
+                    
+                    if isinstance(delta_dict, dict):
+                        content = delta_dict.get('content', '') or ""
+                        tool_calls = delta_dict.get('tool_calls', None)
+                    
+                    # 处理文本内容
+                    if content:
+                        full_content += content
+                        chunk_index += 1
+                        # 发送message_chunk事件
+                        yield f"data: {json.dumps({
+                            'type': 'message_chunk',
+                            'message_id': message_id,
+                            'index': chunk_index,
+                            'content': content
+                        })}\n\n"
+                    
+                    # 处理工具调用（增量式）
+                    if tool_calls and isinstance(tool_calls, list):
+                        for tool_call in tool_calls:
+                            if not isinstance(tool_call, dict):
+                                continue
+                            
+                            index = tool_call.get('index')
+                            if index is None:
+                                continue
+                            
+                            if index not in tool_calls_buffer:
+                                tool_calls_buffer[index] = {
+                                    'type': 'function',
+                                    'id': tool_call.get('id', ''),
+                                    'function': {
+                                        'name': tool_call.get('function', {}).get('name', '') if isinstance(tool_call.get('function'), dict) else '',
+                                        'arguments': tool_call.get('function', {}).get('arguments', '') if isinstance(tool_call.get('function'), dict) else ''
+                                    }
+                                }
+                            else:
+                                # 增量更新
+                                existing = tool_calls_buffer[index]
+                                if 'id' in tool_call and tool_call['id']:
+                                    existing['id'] = tool_call['id']
+                                
+                                if 'function' in tool_call and isinstance(tool_call['function'], dict):
+                                    if 'name' in tool_call['function'] and tool_call['function']['name']:
+                                        existing['function']['name'] = tool_call['function']['name']
+                                    if 'arguments' in tool_call['function'] and tool_call['function']['arguments']:
+                                        existing['function']['arguments'] += tool_call['function']['arguments']
+                
+                # 发送心跳保持连接
+                yield "data: {}\n\n"
+            
+            # AI调用结束：更新message的content
+            if full_content:
+                await conversation_service.update_message_content(
+                    conversation_id=conversation.id,
+                    message_id=message_id,
+                    content=full_content
+                )
+            
+            # 记录普通响应完整内容
+            if full_content:
+                conversation_logger.log(
+                    conversation_id=str(conversation.id),
+                    content=f"普通响应完整内容 (第{iteration}次): \n{full_content}"
+                )
+            
+            # 检查是否有工具调用
+            if tool_calls_buffer:
+                # 执行工具调用
+                tool_results = []
+                for index, tool_call in tool_calls_buffer.items():
+                    tool_call_id = tool_call.get('id', '')
+                    function = tool_call.get('function', {})
+                    tool_name = function.get('name', '')
+                    arguments = function.get('arguments', '')
+                    
+                    if not tool_name:
+                        continue
+                    
+                    # 发送tool_call事件，表示AI正在调用工具
+                    yield f"data: {json.dumps({
+                        'type': 'tool_call',
+                        'status': 'calling',
+                        'content': f'正在调用工具: {tool_name}'
+                    })}\n\n"
+                    
+                    # 执行工具
+                    result = await tool_service.execute_tool_call(
+                        tool_call_id=tool_call_id,
+                        tool_name=tool_name,
+                        arguments=arguments,
+                        user_id=current_user.id
+                    )
+                    
+                    tool_results.append({
+                        'tool_call_id': tool_call_id,
+                        'result': result,
+                        'tool_name': tool_name
+                    })
+                    
+                    # 发送tool_result事件，表示工具调用完成
+                    yield f"data: {json.dumps({
+                        'type': 'tool_result',
+                        'status': 'success',
+                        'content': f'工具 {tool_name} 调用完成'
+                    })}\n\n"
+                    
+                    # 记录工具调用完整信息
+                    conversation_logger.log(
+                        conversation_id=str(conversation.id),
+                        content=f"工具调用 (第{iteration}次): - 工具名称: {tool_name}, 工具ID: {tool_call_id}, 完整参数: \n{arguments}"
+                    )
+                    
+                    # 记录工具调用结果
+                    conversation_logger.log(
+                        conversation_id=str(conversation.id),
+                        content=f"工具调用结果 (第{iteration}次): - 工具名称: {tool_name}, 结果: \n{json.dumps(result.dict(), ensure_ascii=False)}"
+                    )
+                    
+                    # 保存工具调用消息到对话
+                    await conversation_service.add_message(
+                        conversation_id=conversation.id,
+                        user_id=current_user.id,
+                        role="assistant",
+                        content=json.dumps({"tool_calls": [tool_call]}),
+                        name="assistant",
+                        message_type="tool_call_status",
+                        tool_json=tool_call
+                    )
+                    
+                    # 保存工具结果消息到对话
+                    await conversation_service.add_message(
+                        conversation_id=conversation.id,
+                        user_id=current_user.id,
+                        role="tool",
+                        content=json.dumps(result.dict()),
+                        name=tool_name,
+                        message_type="tool_result",
+                        tool_json={"tool_name": tool_name, "result": result.dict()}
+                    )
+                
+                # 根据阿里云Function Calling规范，消息序列必须是：
+                # user -> assistant(包含tool_calls) -> tool(包含tool_call_id)
+                # 所以需要先添加包含tool_calls的assistant消息，再添加tool消息
+                
+                # 1. 将tool_calls_buffer转换为列表格式
+                tool_calls_list = list(tool_calls_buffer.values())
+                
+                # 2. 添加包含tool_calls的assistant消息
+                assistant_tool_calls_message = chat.ChatMessage(
+                    role=chat.MessageRole.ASSISTANT,
+                    content="",
+                    tool_calls=tool_calls_list
+                )
+                messages.append(assistant_tool_calls_message)
+                
+                # 3. 将工具调用结果添加到消息历史
+                for tool_result in tool_results:
+                    tool_message = chat.ChatMessage(
+                        role=chat.MessageRole.TOOL,
+                        content=json.dumps(tool_result['result'].dict()),
+                        tool_call_id=tool_result['tool_call_id']
+                    )
+                    messages.append(tool_message)
+                
+                # 继续循环，让AI根据工具结果继续生成响应
+                continue
+            else:
+                # 没有工具调用，退出循环
+                break
+            
+        except Exception as e:
+            # 记录错误日志
+            conversation_logger.log(
+                conversation_id=str(conversation.id),
+                content=f"错误 (第{iteration}次) - 错误类型: {type(e).__name__}, 错误信息: {str(e)}"
+            )
+            
+            # 发送错误信号
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            
+            # 发生错误时退出循环
+            break
+    
+    # 发送结束信号
+    yield "data: [DONE]\n\n"
 
 
 @router.post("/completions/stream")
@@ -50,12 +301,6 @@ async def create_chat_completion_stream(
     api_log_service = APILogService(db)
     tool_service = AiToolService(db)
     
-    # 获取对话日志记录器
-    conversation_logger = get_logger(
-        log_dir=settings.conversation_log_dir,
-        enabled=settings.enable_conversation_log
-    )
-    
     try:
         # 创建或获取对话
         conversation = await conversation_service.get_or_create_conversation(
@@ -72,13 +317,6 @@ async def create_chat_completion_stream(
             name=request.messages[-1].name if request.messages and hasattr(request.messages[-1], 'name') else None
         )
         
-        # 记录用户消息完整内容
-        user_content = request.messages[-1].content if request.messages else ""
-        conversation_logger.log(
-            conversation_id=str(conversation.id),
-            content=f"用户消息 - 内容: \n{user_content}"
-        )
-        
         # 获取系统提示词模板
         system_prompt = prompt_service.get_template(PromptTemplateType.系统提示词)
         system_content = system_prompt.template_content if system_prompt else ""
@@ -89,316 +327,18 @@ async def create_chat_completion_stream(
             messages.append(chat.ChatMessage(role=chat.MessageRole.SYSTEM, content=system_content))
         messages.extend(request.messages)
         
-        # 记录对话开始日志
-        conversation_logger.log(
-            conversation_id=str(conversation.id),
-            content=f"对话开始 - 用户ID: {current_user.id}, 模型: {settings.chat_model}, 消息数量: {len(messages)}"
-        )
-        
         # 获取工具定义
         tools = AiToolService.get_tool_definitions()
         
-        async def generate():
-            full_content = ""
-            tool_calls_buffer = {}
-            message_id = str(uuid.uuid4())
-            chunk_index = 0
-            
-            try:
-                # 第一次AI调用：创建assistant消息到数据库
-                await conversation_service.add_message(
-                    conversation_id=conversation.id,
-                    user_id=current_user.id,
-                    role="assistant",
-                    content="",
-                    name="assistant",
-                    message_type="normal",
-                    message_id=message_id
-                )
-                
-                # 发送message_create事件，表示AI开始回复
-                yield f"data: {json.dumps({
-                    'type': 'message_create',
-                    'message_id': message_id,
-                    'created_at': datetime.now().isoformat()
-                })}\n\n"
-                
-                # 第一次调用AI
-                async for chunk in chat_service.chat_completion_stream(
-                    messages=messages,
-                    tools=tools
-                ):
-                    if chunk.choices and len(chunk.choices) > 0:
-                        delta_dict = chunk.choices[0].delta
-                        
-                        if isinstance(delta_dict, dict):
-                            content = delta_dict.get('content', '') or ""
-                            tool_calls = delta_dict.get('tool_calls', None)
-                        
-                        # 处理文本内容
-                        if content:
-                            full_content += content
-                            chunk_index += 1
-                            # 发送message_chunk事件
-                            yield f"data: {json.dumps({
-                                'type': 'message_chunk',
-                                'message_id': message_id,
-                                'index': chunk_index,
-                                'content': content
-                            })}\n\n"
-                        
-                        # 处理工具调用（增量式）
-                        if tool_calls and isinstance(tool_calls, list):
-                            for tool_call in tool_calls:
-                                if not isinstance(tool_call, dict):
-                                    continue
-                                
-                                index = tool_call.get('index')
-                                if index is None:
-                                    continue
-                                
-                                if index not in tool_calls_buffer:
-                                    tool_calls_buffer[index] = {
-                                        'type': 'function',
-                                        'id': tool_call.get('id', ''),
-                                        'function': {
-                                            'name': tool_call.get('function', {}).get('name', '') if isinstance(tool_call.get('function'), dict) else '',
-                                            'arguments': tool_call.get('function', {}).get('arguments', '') if isinstance(tool_call.get('function'), dict) else ''
-                                        }
-                                    }
-                                else:
-                                    # 增量更新
-                                    existing = tool_calls_buffer[index]
-                                    if 'id' in tool_call and tool_call['id']:
-                                        existing['id'] = tool_call['id']
-                                    
-                                    if 'function' in tool_call and isinstance(tool_call['function'], dict):
-                                        if 'name' in tool_call['function'] and tool_call['function']['name']:
-                                            existing['function']['name'] = tool_call['function']['name']
-                                        if 'arguments' in tool_call['function'] and tool_call['function']['arguments']:
-                                            existing['function']['arguments'] += tool_call['function']['arguments']
-                    
-                    # 发送心跳保持连接
-                    yield "data: {}\n\n"
-                
-                # 第一次AI调用结束：更新message的content
-                if full_content:
-                    await conversation_service.update_message_content(
-                        conversation_id=conversation.id,
-                        message_id=message_id,
-                        content=full_content
-                    )
-                
-                # 记录普通响应完整内容
-                if full_content:
-                    conversation_logger.log(
-                        conversation_id=str(conversation.id),
-                        content=f"普通响应完整内容: \n{full_content}"
-                    )
-                
-                # 检查是否有工具调用
-                if tool_calls_buffer:
-                    # 执行工具调用
-                    tool_results = []
-                    for index, tool_call in tool_calls_buffer.items():
-                        tool_call_id = tool_call.get('id', '')
-                        function = tool_call.get('function', {})
-                        tool_name = function.get('name', '')
-                        arguments = function.get('arguments', '')
-                        
-                        if not tool_name:
-                            continue
-                        
-                        # 发送tool_call事件，表示AI正在调用工具
-                        yield f"data: {json.dumps({
-                            'type': 'tool_call',
-                            'status': 'calling',
-                            'content': f'正在调用工具: {tool_name}'
-                        })}\n\n"
-                        
-                        # 执行工具
-                        result = await tool_service.execute_tool_call(
-                            tool_call_id=tool_call_id,
-                            tool_name=tool_name,
-                            arguments=arguments,
-                            user_id=current_user.id
-                        )
-                        
-                        tool_results.append({
-                            'tool_call_id': tool_call_id,
-                            'result': result,
-                            'tool_name': tool_name
-                        })
-                        
-                        # 发送tool_result事件，表示工具调用完成
-                        yield f"data: {json.dumps({
-                            'type': 'tool_result',
-                            'status': 'success',
-                            'content': f'工具 {tool_name} 调用完成'
-                        })}\n\n"
-                        
-                        # 记录工具调用完整信息
-                        conversation_logger.log(
-                            conversation_id=str(conversation.id),
-                            content=f"工具调用: - 工具名称: {tool_name}, 工具ID: {tool_call_id}, 完整参数: \n{arguments}"
-                        )
-                        
-                        # 记录工具调用结果
-                        conversation_logger.log(
-                            conversation_id=str(conversation.id),
-                            content=f"工具调用结果: - 工具名称: {tool_name}, 结果: \n{json.dumps(result.dict(), ensure_ascii=False)}"
-                        )
-                        
-                        # 保存工具调用消息到对话
-                        await conversation_service.add_message(
-                            conversation_id=conversation.id,
-                            user_id=current_user.id,
-                            role="assistant",
-                            content=json.dumps({"tool_calls": [tool_call]}),
-                            name="assistant",
-                            message_type="tool_call_status",
-                            tool_json=tool_call
-                        )
-                        
-                        # 保存工具结果消息到对话
-                        await conversation_service.add_message(
-                            conversation_id=conversation.id,
-                            user_id=current_user.id,
-                            role="tool",
-                            content=json.dumps(result.dict()),
-                            name=tool_name,
-                            message_type="tool_result",
-                            tool_json={"tool_name": tool_name, "result": result.dict()}
-                        )
-                    
-                    # 根据阿里云Function Calling规范，消息序列必须是：
-                    # user -> assistant(包含tool_calls) -> tool(包含tool_call_id)
-                    # 所以需要先添加包含tool_calls的assistant消息，再添加tool消息
-                    
-                    # 1. 将tool_calls_buffer转换为列表格式
-                    tool_calls_list = list(tool_calls_buffer.values())
-                    
-                    # 2. 添加包含tool_calls的assistant消息
-                    assistant_tool_calls_message = chat.ChatMessage(
-                        role=chat.MessageRole.ASSISTANT,
-                        content="",
-                        tool_calls=tool_calls_list
-                    )
-                    messages.append(assistant_tool_calls_message)
-                    
-                    # 2. 将工具调用结果添加到消息历史
-                    for tool_result in tool_results:
-                        tool_message = chat.ChatMessage(
-                            role=chat.MessageRole.TOOL,
-                            content=json.dumps(tool_result['result'].dict()),
-                            tool_call_id=tool_result['tool_call_id']
-                        )
-                        messages.append(tool_message)
-                    
-                    # 第二次AI调用：创建新的assistant消息到数据库
-                    second_message_id = str(uuid.uuid4())
-                    await conversation_service.add_message(
-                        conversation_id=conversation.id,
-                        user_id=current_user.id,
-                        role="assistant",
-                        content="",
-                        name="assistant",
-                        message_type="normal",
-                        message_id=second_message_id
-                    )
-                    
-                    # 发送message_create事件，表示第二次AI开始回复
-                    yield f"data: {json.dumps({
-                        'type': 'message_create',
-                        'message_id': second_message_id,
-                        'created_at': datetime.now().isoformat()
-                    })}\n\n"
-                    
-                    # 再次调用AI，获取最终回复
-                    assistant_response_content = ""
-                    async for chunk in chat_service.chat_completion_stream(
-                        messages=messages,
-                        tools=tools
-                    ):
-                        if chunk.choices and chunk.choices[0].delta:
-                            delta_dict = chunk.choices[0].delta
-                            content = delta_dict.get('content', '') or ""
-                            
-                            if content:
-                                assistant_response_content += content
-                                full_content += content
-                                chunk_index += 1
-                                # 发送message_chunk事件
-                                yield f"data: {json.dumps({
-                                    'type': 'message_chunk',
-                                    'message_id': second_message_id,
-                                    'index': chunk_index,
-                                    'content': content
-                                })}\n\n"
-                        
-                        yield "data: {}\n\n"
-                    
-                    # 第二次AI调用结束：更新message的content
-                    if assistant_response_content:
-                        await conversation_service.update_message_content(
-                            conversation_id=conversation.id,
-                            message_id=second_message_id,
-                            content=assistant_response_content
-                        )
-                    
-                    # 记录工具调用后响应完整内容
-                    if assistant_response_content:
-                        conversation_logger.log(
-                            conversation_id=str(conversation.id),
-                            content=f"工具调用后响应完整内容: \n{assistant_response_content}"
-                        )
-                
-                # 记录对话结束日志
-                response_time = int((time.time() - start_time) * 1000)
-                conversation_logger.log(
-                    conversation_id=str(conversation.id),
-                    content=f"对话结束 - 总耗时: {response_time}ms, 总内容长度: {len(full_content)}"
-                )
-                
-                # 记录API日志
-                response_time = int((time.time() - start_time) * 1000)
-                await api_log_service.create_log(
-                    user_id=current_user.id,
-                    endpoint="chat/completions/stream",
-                    model=settings.chat_model,
-                    response_time=response_time,
-                    status_code=200
-                )
-                
-                # 发送结束信号
-                yield "data: [DONE]\n\n"
-                
-            except Exception as e:
-                # 记录错误日志
-                conversation_logger.log(
-                    conversation_id=str(conversation.id),
-                    content=f"错误 - 错误类型: {type(e).__name__}, 错误信息: {str(e)}"
-                )
-                
-                # 记录错误日志
-                response_time = int((time.time() - start_time) * 1000)
-                await api_log_service.create_log(
-                    user_id=current_user.id,
-                    endpoint="chat/completions/stream",
-                    model=settings.chat_model,
-                    response_time=response_time,
-                    status_code=500,
-                    error_message=str(e)
-                )
-                
-                # 发送错误信号
-                yield f"data: {json.dumps({'error': str(e)})}\n\n"
-                
-            finally:
-                pass
-        
         return StreamingResponse(
-            generate(),
+            _generate_chat_stream(
+                conversation=conversation,
+                current_user=current_user,
+                conversation_service=conversation_service,
+                tool_service=tool_service,
+                messages=messages,
+                tools=tools
+            ),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
