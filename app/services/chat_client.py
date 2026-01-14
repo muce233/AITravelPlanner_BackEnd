@@ -74,10 +74,10 @@ class ChatClient:
             # 只有当 name 不为 None 时才添加
             if msg.name is not None:
                 msg_dict["name"] = msg.name
-            # 只有当 tool_call_id 不为 None 时才添加（用于tool角色的消息）
-            if msg.tool_call_id is not None:
-                msg_dict["tool_call_id"] = msg.tool_call_id
-            # 只有当 tool_calls 不为 None 时才添加（用于assistant角色的消息）
+            # 对于tool角色的消息，必须添加tool_call_id字段
+            if msg.role == chat.MessageRole.TOOL:
+                msg_dict["tool_call_id"] = msg.tool_call_id if msg.tool_call_id is not None else ""
+            # 对于assistant角色的消息，添加tool_calls字段
             if msg.tool_calls is not None:
                 msg_dict["tool_calls"] = msg.tool_calls
             messages_data.append(msg_dict)
