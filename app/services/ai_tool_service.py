@@ -282,11 +282,13 @@ class AiToolService:
         """
         执行创建行程点工具
         
-        该方法会根据对话ID获取关联的行程，然后创建一个新的行程点。
+        该方法会根据对话ID获取关联的行程，然后批量创建行程点。
+        统一使用批量模式，单个创建时也使用包含单个元素的数组。
         
         Args:
             tool_call_id: 工具调用ID
             arguments: 创建行程点工具参数（JSON字符串）
+                      - details 数组，每个元素为一个行程点对象
             user_id: 用户ID
             conversation_id: 对话ID（用于获取对话关联的行程）
         
@@ -338,83 +340,114 @@ class AiToolService:
                     error="行程不存在或无权限访问"
                 )
             
-            day = params.get("day")
-            type_value = params.get("type")
-            name = params.get("name")
+            # 获取批量创建的行程点列表
+            details_to_create = params.get("details")
             
-            if not day or not type_value or not name:
+            if not isinstance(details_to_create, list) or len(details_to_create) == 0:
                 return ToolCallResult(
                     tool_name="create_trip_detail",
                     success=False,
-                    error="缺少必要参数：day（第几天）、type（类型：景点/住宿/餐厅/交通）、name（名称）为必填项"
+                    error="details参数必须是非空数组"
                 )
             
-            location = params.get("location")
-            address = params.get("address")
-            start_time_str = params.get("start_time")
-            end_time_str = params.get("end_time")
-            description = params.get("description")
-            price = params.get("price", 0.0)
-            notes = params.get("notes")
-            images = params.get("images")
+            created_details = []
+            failed_details = []
             
-            start_time = None
-            if start_time_str:
+            for idx, detail_params in enumerate(details_to_create):
                 try:
-                    start_time = datetime.fromisoformat(start_time_str)
-                except ValueError:
-                    return ToolCallResult(
-                        tool_name="create_trip_detail",
-                        success=False,
-                        error="开始时间格式错误，请使用ISO格式"
+                    day = detail_params.get("day")
+                    type_value = detail_params.get("type")
+                    name = detail_params.get("name")
+                    
+                    if not day or not type_value or not name:
+                        failed_details.append({
+                            "index": idx,
+                            "error": "缺少必要参数：day、type、name为必填项"
+                        })
+                        continue
+                    
+                    location = detail_params.get("location")
+                    address = detail_params.get("address")
+                    start_time_str = detail_params.get("start_time")
+                    end_time_str = detail_params.get("end_time")
+                    description = detail_params.get("description")
+                    price = detail_params.get("price", 0.0)
+                    notes = detail_params.get("notes")
+                    images = detail_params.get("images")
+                    
+                    start_time = None
+                    if start_time_str:
+                        try:
+                            start_time = datetime.fromisoformat(start_time_str)
+                        except ValueError:
+                            failed_details.append({
+                                "index": idx,
+                                "error": "开始时间格式错误，请使用ISO格式"
+                            })
+                            continue
+                    
+                    end_time = None
+                    if end_time_str:
+                        try:
+                            end_time = datetime.fromisoformat(end_time_str)
+                        except ValueError:
+                            failed_details.append({
+                                "index": idx,
+                                "error": "结束时间格式错误，请使用ISO格式"
+                            })
+                            continue
+                    
+                    new_detail = TripDetail(
+                        trip_id=trip_id,
+                        day=day,
+                        type=type_value,
+                        name=name,
+                        location=location,
+                        address=address,
+                        start_time=start_time,
+                        end_time=end_time,
+                        description=description,
+                        price=price,
+                        notes=notes,
+                        images=images
                     )
+                    
+                    self.db.add(new_detail)
+                    await self.db.flush()
+                    await self.db.refresh(new_detail)
+                    
+                    created_details.append({
+                        "detail_id": str(new_detail.id),
+                        "day": new_detail.day,
+                        "type": new_detail.type,
+                        "name": new_detail.name,
+                        "location": new_detail.location,
+                        "address": new_detail.address,
+                        "start_time": new_detail.start_time.isoformat() if new_detail.start_time else None,
+                        "end_time": new_detail.end_time.isoformat() if new_detail.end_time else None,
+                        "description": new_detail.description,
+                        "price": new_detail.price,
+                        "notes": new_detail.notes,
+                        "images": new_detail.images
+                    })
+                except Exception as e:
+                    failed_details.append({
+                        "index": idx,
+                        "error": f"创建失败: {str(e)}"
+                    })
             
-            end_time = None
-            if end_time_str:
-                try:
-                    end_time = datetime.fromisoformat(end_time_str)
-                except ValueError:
-                    return ToolCallResult(
-                        tool_name="create_trip_detail",
-                        success=False,
-                        error="结束时间格式错误，请使用ISO格式"
-                    )
-            
-            new_detail = TripDetail(
-                trip_id=trip_id,
-                day=day,
-                type=type_value,
-                name=name,
-                location=location,
-                address=address,
-                start_time=start_time,
-                end_time=end_time,
-                description=description,
-                price=price,
-                notes=notes,
-                images=images
-            )
-            
-            self.db.add(new_detail)
             await self.db.commit()
-            await self.db.refresh(new_detail)
             
             return ToolCallResult(
                 tool_name="create_trip_detail",
-                success=True,
+                success=len(failed_details) == 0,
                 data={
-                    "detail_id": str(new_detail.id),
-                    "day": new_detail.day,
-                    "type": new_detail.type,
-                    "name": new_detail.name,
-                    "location": new_detail.location,
-                    "address": new_detail.address,
-                    "start_time": new_detail.start_time.isoformat() if new_detail.start_time else None,
-                    "end_time": new_detail.end_time.isoformat() if new_detail.end_time else None,
-                    "description": new_detail.description,
-                    "price": new_detail.price,
-                    "notes": new_detail.notes,
-                    "images": new_detail.images
+                    "total_count": len(details_to_create),
+                    "success_count": len(created_details),
+                    "failed_count": len(failed_details),
+                    "created_details": created_details,
+                    "failed_details": failed_details,
+                    "message": f"成功创建{len(created_details)}个行程点" + (f"，失败{len(failed_details)}个" if failed_details else "")
                 }
             )
             
@@ -550,10 +583,12 @@ class AiToolService:
         执行更新行程点工具
         
         该方法会根据行程点ID更新指定的行程点信息。
+        统一使用批量模式，单个更新时也使用包含单个元素的数组。
         
         Args:
             tool_call_id: 工具调用ID
-            arguments: 更新行程点工具参数（JSON字符串，必须包含detail_id）
+            arguments: 更新行程点工具参数（JSON字符串）
+                      - details 数组，每个元素为一个行程点更新对象，必须包含detail_id
             user_id: 用户ID
             conversation_id: 对话ID（用于获取对话关联的行程）
         
@@ -577,15 +612,6 @@ class AiToolService:
                     error="参数格式错误，请提供有效的JSON格式参数"
                 )
             
-            detail_id = params.get("detail_id")
-            
-            if not detail_id:
-                return ToolCallResult(
-                    tool_name="update_trip_detail",
-                    success=False,
-                    error="缺少必要参数：detail_id（行程点ID）为必填项"
-                )
-            
             conv_stmt = select(Conversation.trip_id).where(
                 Conversation.id == conversation_id,
                 Conversation.user_id == user_id
@@ -600,115 +626,152 @@ class AiToolService:
                     error="当前对话没有关联的行程"
                 )
             
-            stmt = select(TripDetail).where(
-                TripDetail.id == detail_id,
-                TripDetail.trip_id == trip_id
-            )
-            result = await self.db.execute(stmt)
-            detail = result.scalar_one_or_none()
+            # 获取批量更新的行程点列表
+            details_to_update = params.get("details")
             
-            if not detail:
+            if not isinstance(details_to_update, list) or len(details_to_update) == 0:
                 return ToolCallResult(
                     tool_name="update_trip_detail",
                     success=False,
-                    error="行程点不存在或无权限访问"
+                    error="details参数必须是非空数组"
                 )
             
-            update_fields = []
+            updated_details = []
+            failed_details = []
             
-            if "day" in params and params["day"] is not None:
-                detail.day = params["day"]
-                update_fields.append("第几天")
-            
-            if "type" in params and params["type"] is not None:
-                detail.type = params["type"]
-                update_fields.append("类型")
-            
-            if "name" in params and params["name"] is not None:
-                detail.name = params["name"]
-                update_fields.append("名称")
-            
-            if "location" in params:
-                detail.location = params["location"]
-                update_fields.append("位置")
-            
-            if "address" in params:
-                detail.address = params["address"]
-                update_fields.append("地址")
-            
-            if "start_time" in params:
-                if params["start_time"] is not None:
-                    try:
-                        detail.start_time = datetime.fromisoformat(params["start_time"])
-                        update_fields.append("开始时间")
-                    except ValueError:
-                        return ToolCallResult(
-                            tool_name="update_trip_detail",
-                            success=False,
-                            error="开始时间格式错误，请使用ISO格式"
-                        )
-                else:
-                    detail.start_time = None
-                    update_fields.append("开始时间")
-            
-            if "end_time" in params:
-                if params["end_time"] is not None:
-                    try:
-                        detail.end_time = datetime.fromisoformat(params["end_time"])
-                        update_fields.append("结束时间")
-                    except ValueError:
-                        return ToolCallResult(
-                            tool_name="update_trip_detail",
-                            success=False,
-                            error="结束时间格式错误，请使用ISO格式"
-                        )
-                else:
-                    detail.end_time = None
-                    update_fields.append("结束时间")
-            
-            if "description" in params:
-                detail.description = params["description"]
-                update_fields.append("描述")
-            
-            if "price" in params:
-                detail.price = params["price"]
-                update_fields.append("价格")
-            
-            if "notes" in params:
-                detail.notes = params["notes"]
-                update_fields.append("备注")
-            
-            if "images" in params:
-                detail.images = params["images"]
-                update_fields.append("图片")
-            
-            if not update_fields:
-                return ToolCallResult(
-                    tool_name="update_trip_detail",
-                    success=False,
-                    error="没有提供需要更新的字段"
-                )
+            for idx, detail_params in enumerate(details_to_update):
+                try:
+                    detail_id = detail_params.get("detail_id")
+                    
+                    if not detail_id:
+                        failed_details.append({
+                            "index": idx,
+                            "error": "缺少必要参数：detail_id为必填项"
+                        })
+                        continue
+                    
+                    stmt = select(TripDetail).where(
+                        TripDetail.id == detail_id,
+                        TripDetail.trip_id == trip_id
+                    )
+                    result = await self.db.execute(stmt)
+                    detail = result.scalar_one_or_none()
+                    
+                    if not detail:
+                        failed_details.append({
+                            "index": idx,
+                            "error": "行程点不存在或无权限访问"
+                        })
+                        continue
+                    
+                    update_fields = []
+                    
+                    if "day" in detail_params and detail_params["day"] is not None:
+                        detail.day = detail_params["day"]
+                        update_fields.append("第几天")
+                    
+                    if "type" in detail_params and detail_params["type"] is not None:
+                        detail.type = detail_params["type"]
+                        update_fields.append("类型")
+                    
+                    if "name" in detail_params and detail_params["name"] is not None:
+                        detail.name = detail_params["name"]
+                        update_fields.append("名称")
+                    
+                    if "location" in detail_params:
+                        detail.location = detail_params["location"]
+                        update_fields.append("位置")
+                    
+                    if "address" in detail_params:
+                        detail.address = detail_params["address"]
+                        update_fields.append("地址")
+                    
+                    if "start_time" in detail_params:
+                        if detail_params["start_time"] is not None:
+                            try:
+                                detail.start_time = datetime.fromisoformat(detail_params["start_time"])
+                                update_fields.append("开始时间")
+                            except ValueError:
+                                failed_details.append({
+                                    "index": idx,
+                                    "error": "开始时间格式错误，请使用ISO格式"
+                                })
+                                continue
+                        else:
+                            detail.start_time = None
+                            update_fields.append("开始时间")
+                    
+                    if "end_time" in detail_params:
+                        if detail_params["end_time"] is not None:
+                            try:
+                                detail.end_time = datetime.fromisoformat(detail_params["end_time"])
+                                update_fields.append("结束时间")
+                            except ValueError:
+                                failed_details.append({
+                                    "index": idx,
+                                    "error": "结束时间格式错误，请使用ISO格式"
+                                })
+                                continue
+                        else:
+                            detail.end_time = None
+                            update_fields.append("结束时间")
+                    
+                    if "description" in detail_params:
+                        detail.description = detail_params["description"]
+                        update_fields.append("描述")
+                    
+                    if "price" in detail_params:
+                        detail.price = detail_params["price"]
+                        update_fields.append("价格")
+                    
+                    if "notes" in detail_params:
+                        detail.notes = detail_params["notes"]
+                        update_fields.append("备注")
+                    
+                    if "images" in detail_params:
+                        detail.images = detail_params["images"]
+                        update_fields.append("图片")
+                    
+                    if not update_fields:
+                        failed_details.append({
+                            "index": idx,
+                            "error": "没有提供需要更新的字段"
+                        })
+                        continue
+                    
+                    updated_details.append({
+                        "detail_id": str(detail.id),
+                        "day": detail.day,
+                        "type": detail.type,
+                        "name": detail.name,
+                        "location": detail.location,
+                        "address": detail.address,
+                        "start_time": detail.start_time.isoformat() if detail.start_time else None,
+                        "end_time": detail.end_time.isoformat() if detail.end_time else None,
+                        "description": detail.description,
+                        "price": detail.price,
+                        "notes": detail.notes,
+                        "images": detail.images,
+                        "updated_fields": update_fields
+                    })
+                except Exception as e:
+                    failed_details.append({
+                        "index": idx,
+                        "error": f"更新失败: {str(e)}"
+                    })
             
             await self.db.commit()
-            await self.db.refresh(detail)
             
             return ToolCallResult(
                 tool_name="update_trip_detail",
-                success=True,
+                success=len(failed_details) == 0,
                 data={
-                    "detail_id": str(detail.id),
-                    "day": detail.day,
-                    "type": detail.type,
-                    "name": detail.name,
-                    "location": detail.location,
-                    "address": detail.address,
-                    "start_time": detail.start_time.isoformat() if detail.start_time else None,
-                    "end_time": detail.end_time.isoformat() if detail.end_time else None,
-                    "description": detail.description,
-                    "price": detail.price,
-                    "notes": detail.notes,
-                    "images": detail.images,
-                    "updated_fields": update_fields
+                    "total_count": len(details_to_update),
+                    "success_count": len(updated_details),
+                    "failed_count": len(failed_details),
+                    "updated_details": updated_details,
+                    "failed_details": failed_details,
+                    "message": f"成功更新{len(updated_details)}个行程点" + (f"，失败{len(failed_details)}个" if failed_details else "")
                 }
             )
             
@@ -730,10 +793,12 @@ class AiToolService:
         执行删除行程点工具
         
         该方法会根据行程点ID删除指定的行程点。
+        统一使用批量模式，单个删除时也使用包含单个元素的数组。
         
         Args:
             tool_call_id: 工具调用ID
-            arguments: 删除行程点工具参数（JSON字符串，必须包含detail_id）
+            arguments: 删除行程点工具参数（JSON字符串）
+                      - detail_ids 数组，每个元素为一个行程点ID
             user_id: 用户ID
             conversation_id: 对话ID（用于获取对话关联的行程）
         
@@ -757,15 +822,6 @@ class AiToolService:
                     error="参数格式错误，请提供有效的JSON格式参数"
                 )
             
-            detail_id = params.get("detail_id")
-            
-            if not detail_id:
-                return ToolCallResult(
-                    tool_name="delete_trip_detail",
-                    success=False,
-                    error="缺少必要参数：detail_id（行程点ID）为必填项"
-                )
-            
             conv_stmt = select(Conversation.trip_id).where(
                 Conversation.id == conversation_id,
                 Conversation.user_id == user_id
@@ -780,31 +836,62 @@ class AiToolService:
                     error="当前对话没有关联的行程"
                 )
             
-            stmt = select(TripDetail).where(
-                TripDetail.id == detail_id,
-                TripDetail.trip_id == trip_id
-            )
-            result = await self.db.execute(stmt)
-            detail = result.scalar_one_or_none()
+            # 获取批量删除的行程点ID列表
+            detail_ids_to_delete = params.get("detail_ids")
             
-            if not detail:
+            if not isinstance(detail_ids_to_delete, list) or len(detail_ids_to_delete) == 0:
                 return ToolCallResult(
                     tool_name="delete_trip_detail",
                     success=False,
-                    error="行程点不存在或无权限访问"
+                    error="detail_ids参数必须是非空数组"
                 )
             
-            detail_name = detail.name
-            await self.db.delete(detail)
+            deleted_details = []
+            failed_details = []
+            
+            for idx, detail_id in enumerate(detail_ids_to_delete):
+                try:
+                    stmt = select(TripDetail).where(
+                        TripDetail.id == detail_id,
+                        TripDetail.trip_id == trip_id
+                    )
+                    result = await self.db.execute(stmt)
+                    detail = result.scalar_one_or_none()
+                    
+                    if not detail:
+                        failed_details.append({
+                            "index": idx,
+                            "detail_id": detail_id,
+                            "error": "行程点不存在或无权限访问"
+                        })
+                        continue
+                    
+                    detail_name = detail.name
+                    await self.db.delete(detail)
+                    
+                    deleted_details.append({
+                        "detail_id": str(detail_id),
+                        "deleted_detail_name": detail_name
+                    })
+                except Exception as e:
+                    failed_details.append({
+                        "index": idx,
+                        "detail_id": detail_id,
+                        "error": f"删除失败: {str(e)}"
+                    })
+            
             await self.db.commit()
             
             return ToolCallResult(
                 tool_name="delete_trip_detail",
-                success=True,
+                success=len(failed_details) == 0,
                 data={
-                    "detail_id": str(detail_id),
-                    "deleted_detail_name": detail_name,
-                    "message": "行程点删除成功"
+                    "total_count": len(detail_ids_to_delete),
+                    "success_count": len(deleted_details),
+                    "failed_count": len(failed_details),
+                    "deleted_details": deleted_details,
+                    "failed_details": failed_details,
+                    "message": f"成功删除{len(deleted_details)}个行程点" + (f"，失败{len(failed_details)}个" if failed_details else "")
                 }
             )
             
@@ -921,70 +1008,80 @@ class AiToolService:
                 "type": "function",
                 "function": {
                     "name": "create_trip_detail",
-                    "description": "用于创建新的行程点。该工具会在当前对话关联的行程中添加一个新的行程点。必填参数包括：day（第几天）、type（类型：景点/住宿/餐厅/交通）、name（名称）。可选参数包括：location（位置，经纬度对象）、address（地址）、start_time（开始时间，ISO格式）、end_time（结束时间，ISO格式）、description（描述）、price（价格）、notes（备注）、images（图片链接数组）。",
+                    "description": "用于创建新的行程点。统一使用批量模式，单个创建时也使用包含单个元素的数组。必填参数包括：day（第几天）、type（类型：景点/住宿/餐厅/交通）、name（名称）。可选参数包括：location（位置，经纬度对象）、address（地址）、start_time（开始时间，ISO格式）、end_time（结束时间，ISO格式）、description（描述）、price（价格）、notes（备注）、images（图片链接数组）。",
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "day": {
-                                "type": "integer",
-                                "description": "第几天"
-                            },
-                            "type": {
-                                "type": "string",
-                                "description": "类型，可选值：景点、住宿、餐厅、交通",
-                                "enum": ["景点", "住宿", "餐厅", "交通"]
-                            },
-                            "name": {
-                                "type": "string",
-                                "description": "行程点名称"
-                            },
-                            "location": {
-                                "type": "object",
-                                "description": "位置信息，包含经纬度",
-                                "properties": {
-                                    "lat": {
-                                        "type": "number",
-                                        "description": "纬度"
-                                    },
-                                    "lng": {
-                                        "type": "number",
-                                        "description": "经度"
-                                    }
-                                }
-                            },
-                            "address": {
-                                "type": "string",
-                                "description": "详细地址"
-                            },
-                            "start_time": {
-                                "type": "string",
-                                "description": "开始时间，ISO格式，例如：2024-01-01T09:00:00"
-                            },
-                            "end_time": {
-                                "type": "string",
-                                "description": "结束时间，ISO格式，例如：2024-01-01T11:00:00"
-                            },
-                            "description": {
-                                "type": "string",
-                                "description": "行程点描述"
-                            },
-                            "price": {
-                                "type": "number",
-                                "description": "价格"
-                            },
-                            "notes": {
-                                "type": "string",
-                                "description": "备注信息"
-                            },
-                            "images": {
+                            "details": {
                                 "type": "array",
-                                "description": "图片链接数组",
+                                "description": "包含多个行程点对象的数组。每个对象包含：day（第几天）、type（类型）、name（名称）等必填和可选参数",
                                 "items": {
-                                    "type": "string"
+                                    "type": "object",
+                                    "properties": {
+                                        "day": {
+                                            "type": "integer",
+                                            "description": "第几天"
+                                        },
+                                        "type": {
+                                            "type": "string",
+                                            "description": "类型，可选值：景点、住宿、餐厅、交通",
+                                            "enum": ["景点", "住宿", "餐厅", "交通"]
+                                        },
+                                        "name": {
+                                            "type": "string",
+                                            "description": "行程点名称"
+                                        },
+                                        "location": {
+                                            "type": "object",
+                                            "description": "位置信息，包含经纬度",
+                                            "properties": {
+                                                "lat": {
+                                                    "type": "number",
+                                                    "description": "纬度"
+                                                },
+                                                "lng": {
+                                                    "type": "number",
+                                                    "description": "经度"
+                                                }
+                                            }
+                                        },
+                                        "address": {
+                                            "type": "string",
+                                            "description": "详细地址"
+                                        },
+                                        "start_time": {
+                                            "type": "string",
+                                            "description": "开始时间，ISO格式，例如：2024-01-01T09:00:00"
+                                        },
+                                        "end_time": {
+                                            "type": "string",
+                                            "description": "结束时间，ISO格式，例如：2024-01-01T11:00:00"
+                                        },
+                                        "description": {
+                                            "type": "string",
+                                            "description": "行程点描述"
+                                        },
+                                        "price": {
+                                            "type": "number",
+                                            "description": "价格"
+                                        },
+                                        "notes": {
+                                            "type": "string",
+                                            "description": "备注信息"
+                                        },
+                                        "images": {
+                                            "type": "array",
+                                            "description": "图片链接数组",
+                                            "items": {
+                                                "type": "string"
+                                            }
+                                        }
+                                    },
+                                    "required": ["day", "type", "name"]
                                 }
                             }
                         },
-                        "required": ["day", "type", "name"]
+                        "required": ["details"]
                     }
                 }
             },
@@ -1009,74 +1106,84 @@ class AiToolService:
                 "type": "function",
                 "function": {
                     "name": "update_trip_detail",
-                    "description": "用于更新指定的行程点信息。该工具会根据行程点ID更新对应的行程点。必填参数：detail_id（行程点ID）。可选参数：day（第几天）、type（类型）、name（名称）、location（位置）、address（地址）、start_time（开始时间，ISO格式）、end_time（结束时间，ISO格式）、description（描述）、price（价格）、notes（备注）、images（图片链接数组）。",
+                    "description": "用于更新指定的行程点信息。统一使用批量模式，单个更新时也使用包含单个元素的数组。必填参数：details数组，每个元素必须包含detail_id（行程点ID）。可选参数：day（第几天）、type（类型）、name（名称）、location（位置）、address（地址）、start_time（开始时间，ISO格式）、end_time（结束时间，ISO格式）、description（描述）、price（价格）、notes（备注）、images（图片链接数组）。",
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "detail_id": {
-                                "type": "string",
-                                "description": "行程点ID"
-                            },
-                            "day": {
-                                "type": "integer",
-                                "description": "第几天"
-                            },
-                            "type": {
-                                "type": "string",
-                                "description": "类型，可选值：景点、住宿、餐厅、交通",
-                                "enum": ["景点", "住宿", "餐厅", "交通"]
-                            },
-                            "name": {
-                                "type": "string",
-                                "description": "行程点名称"
-                            },
-                            "location": {
-                                "type": "object",
-                                "description": "位置信息，包含经纬度",
-                                "properties": {
-                                    "lat": {
-                                        "type": "number",
-                                        "description": "纬度"
-                                    },
-                                    "lng": {
-                                        "type": "number",
-                                        "description": "经度"
-                                    }
-                                }
-                            },
-                            "address": {
-                                "type": "string",
-                                "description": "详细地址"
-                            },
-                            "start_time": {
-                                "type": "string",
-                                "description": "开始时间，ISO格式，例如：2024-01-01T09:00:00"
-                            },
-                            "end_time": {
-                                "type": "string",
-                                "description": "结束时间，ISO格式，例如：2024-01-01T11:00:00"
-                            },
-                            "description": {
-                                "type": "string",
-                                "description": "行程点描述"
-                            },
-                            "price": {
-                                "type": "number",
-                                "description": "价格"
-                            },
-                            "notes": {
-                                "type": "string",
-                                "description": "备注信息"
-                            },
-                            "images": {
+                            "details": {
                                 "type": "array",
-                                "description": "图片链接数组",
+                                "description": "包含多个行程点更新对象的数组。每个对象必须包含detail_id，以及需要更新的字段",
                                 "items": {
-                                    "type": "string"
+                                    "type": "object",
+                                    "properties": {
+                                        "detail_id": {
+                                            "type": "string",
+                                            "description": "行程点ID"
+                                        },
+                                        "day": {
+                                            "type": "integer",
+                                            "description": "第几天"
+                                        },
+                                        "type": {
+                                            "type": "string",
+                                            "description": "类型，可选值：景点、住宿、餐厅、交通",
+                                            "enum": ["景点", "住宿", "餐厅", "交通"]
+                                        },
+                                        "name": {
+                                            "type": "string",
+                                            "description": "行程点名称"
+                                        },
+                                        "location": {
+                                            "type": "object",
+                                            "description": "位置信息，包含经纬度",
+                                            "properties": {
+                                                "lat": {
+                                                    "type": "number",
+                                                    "description": "纬度"
+                                                },
+                                                "lng": {
+                                                    "type": "number",
+                                                    "description": "经度"
+                                                }
+                                            }
+                                        },
+                                        "address": {
+                                            "type": "string",
+                                            "description": "详细地址"
+                                        },
+                                        "start_time": {
+                                            "type": "string",
+                                            "description": "开始时间，ISO格式，例如：2024-01-01T09:00:00"
+                                        },
+                                        "end_time": {
+                                            "type": "string",
+                                            "description": "结束时间，ISO格式，例如：2024-01-01T11:00:00"
+                                        },
+                                        "description": {
+                                            "type": "string",
+                                            "description": "行程点描述"
+                                        },
+                                        "price": {
+                                            "type": "number",
+                                            "description": "价格"
+                                        },
+                                        "notes": {
+                                            "type": "string",
+                                            "description": "备注信息"
+                                        },
+                                        "images": {
+                                            "type": "array",
+                                            "description": "图片链接数组",
+                                            "items": {
+                                                "type": "string"
+                                            }
+                                        }
+                                    },
+                                    "required": ["detail_id"]
                                 }
                             }
                         },
-                        "required": ["detail_id"]
+                        "required": ["details"]
                     }
                 }
             },
@@ -1084,16 +1191,20 @@ class AiToolService:
                 "type": "function",
                 "function": {
                     "name": "delete_trip_detail",
-                    "description": "用于删除指定的行程点。该工具会根据行程点ID删除对应的行程点。必填参数：detail_id（行程点ID）。",
+                    "description": "用于删除指定的行程点。统一使用批量模式，单个删除时也使用包含单个元素的数组。必填参数：detail_ids数组，每个元素为一个行程点ID。",
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "detail_id": {
-                                "type": "string",
-                                "description": "要删除的行程点ID"
+                            "detail_ids": {
+                                "type": "array",
+                                "description": "包含多个行程点ID的数组",
+                                "items": {
+                                    "type": "string",
+                                    "description": "行程点ID"
+                                }
                             }
                         },
-                        "required": ["detail_id"]
+                        "required": ["detail_ids"]
                     }
                 }
             }
