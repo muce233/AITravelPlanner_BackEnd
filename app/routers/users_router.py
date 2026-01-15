@@ -4,48 +4,11 @@ from sqlalchemy.future import select
 from typing import List
 
 from ..database import get_db
-from ..auth import get_password_hash, get_current_active_user
+from ..auth import get_current_active_user
 from ..models import User as UserModel
-from ..schemas.user import User, UserCreate, UserUpdate
+from ..schemas.user import User, UserUpdate
 
 router = APIRouter(prefix="/api/users", tags=["users"])
-
-
-@router.post("/register", response_model=User)
-async def register_user(user: UserCreate, db: AsyncSession = Depends(get_db)):
-    """用户注册"""
-    # 检查用户名是否已存在
-    stmt = select(UserModel).where(UserModel.username == user.username)
-    result = await db.execute(stmt)
-    db_user_by_username = result.scalar_one_or_none()
-    if db_user_by_username:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="用户名已存在"
-        )
-    
-    # 检查手机号是否已存在
-    stmt = select(UserModel).where(UserModel.phone_number == user.phone_number)
-    result = await db.execute(stmt)
-    db_user_by_phone = result.scalar_one_or_none()
-    if db_user_by_phone:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="手机号已注册"
-        )
-    
-    # 创建新用户
-    hashed_password = get_password_hash(user.password)
-    db_user = UserModel(
-        username=user.username,
-        phone_number=user.phone_number,
-        password_hash=hashed_password
-    )
-    
-    db.add(db_user)
-    await db.commit()
-    await db.refresh(db_user)
-    return db_user
 
 
 @router.post("/login")
