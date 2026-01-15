@@ -4,10 +4,10 @@
 - 从文件系统加载提示词模板
 """
 from typing import Dict, Optional, List
-from pathlib import Path
 from ..schemas.prompt import (
     PromptTemplate, PromptTemplateType
 )
+from ..prompts import prompts
 
 class PromptService:
     """提示词管理服务类
@@ -22,7 +22,7 @@ class PromptService:
         assembled = service.assemble_prompt(intent_result.intent, extraction_result.extracted_info)
     """
 
-    def __init__(self, prompts_dir: Optional[str] = None):
+    def __init__(self):
         """
         初始化提示词服务
         
@@ -30,80 +30,48 @@ class PromptService:
         并根据文件名推断模板的类型和名称。
         
         Args:
-            prompts_dir: 提示词文件夹路径，默认为app/prompts
-                        如果不提供，则使用相对于当前文件的app/prompts目录
         
         Raises:
             FileNotFoundError: 当指定的提示词文件夹不存在时抛出
         
         Attributes:
-            prompts_dir (Path): 提示词文件夹的绝对路径
             _templates (Dict[str, PromptTemplate]): 存储所有加载的提示词模板，键为模板ID
         """
-        if prompts_dir is None:
-            current_dir = Path(__file__).parent.parent
-            prompts_dir = current_dir / "prompts"
         
-        self.prompts_dir = Path(prompts_dir)
         self._templates: Dict[str, PromptTemplate] = {}
         self._load_templates()
 
     def _load_templates(self):
-        """从prompts文件夹加载所有提示词模板
+        """从prompts.py文件加载所有提示词模板
         
-        该方法会遍历PromptTemplateType枚举的所有值,并尝试加载同名的.md文件。
+        该方法会遍历PromptTemplateType枚举的所有值,并从prompts.py文件中加载对应的提示词。
         
         加载过程:
-        1. 检查prompts_dir是否存在,不存在则抛出异常
-        2. 遍历PromptTemplateType枚举的所有值
-        3. 对于每个枚举值,查找同名的.md文件
-        4. 读取文件内容作为模板内容
-        5. 创建PromptTemplate对象并存储到_templates字典中
+        3. 直接引用prompts模块
+        4. 遍历PromptTemplateType枚举的所有值
+        5. 从模块中获取对应的提示词变量
+        6. 创建PromptTemplate对象并存储到_templates字典中
         
         Raises:
-            FileNotFoundError: 当prompts_dir目录不存在时
         """
-        if not self.prompts_dir.exists():
-            raise FileNotFoundError(f"提示词文件夹不存在: {self.prompts_dir}")
+        
+        # 直接引用prompts模块
+        prompts_module = prompts
         
         # 遍历PromptTemplateType枚举的所有值
         for template_type in PromptTemplateType:
-            # 使用枚举值作为文件名(转换为小写)
-            template_filename = f"{template_type.value}.md"
-            template_file = self.prompts_dir / template_filename
-            
-            # 检查文件是否存在
-            if template_file.exists():
-                # 读取文件内容
-                with open(template_file, 'r', encoding='utf-8') as f:
-                    template_content = f.read()
+            # 从模块中获取提示词变量
+            if hasattr(prompts_module, template_type.value):
+                template_content = getattr(prompts_module, template_type.value)
                 
                 # 创建PromptTemplate对象
                 template = PromptTemplate(
                     template_type=template_type,
                     template_content=template_content
                 )
-                
-                # 存储到字典中
                 self._templates[template_type.value] = template
-
-    def reload_templates(self):
-        """重新加载提示词模板
-        
-        当prompts_dir目录下的模板文件被修改或新增后，调用此方法可以重新加载所有模板。
-        该方法会先清空已加载的模板，然后重新执行加载流程。
-        
-        使用场景：
-        - 模板文件被修改后需要立即生效
-        - 新增了模板文件需要加载
-        - 需要刷新模板缓存
-        
-        Note:
-            该方法会清除内存中的所有模板，然后重新从文件系统加载，
-            可能会短暂影响性能，建议在必要时调用。
-        """
-        self._templates.clear()
-        self._load_templates()
+            else:
+                raise ValueError(f"在prompts.py中未找到提示词变量: {template_type.value}")
 
     def get_template(self, template_type: PromptTemplateType) -> Optional[PromptTemplate]:
         """
